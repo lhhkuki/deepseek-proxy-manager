@@ -90,8 +90,6 @@ class OpenAITranslateMixin:
                     rc = _REASONING_CACHE.get(key)
                     if rc:
                         m["reasoning_content"] = rc
-                        continue
-                m["reasoning_content"] = ""
 
         model = self._map_model(req.get("model", "deepseek-v4-pro"))
         chat = {
