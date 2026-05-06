@@ -147,6 +147,8 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                     else:
                         parts.append(p.get("text", json.dumps(p)))
             return "\n".join(parts) if parts else ""
+        if content is None:
+            return ""
         return str(content) if content else ""
 
     @staticmethod

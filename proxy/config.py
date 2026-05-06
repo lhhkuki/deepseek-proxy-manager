@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import queue
+import threading
 import hashlib
 
 # ── log queue (shared across modules) ──────────────────────────────
@@ -18,6 +19,7 @@ AUTH_PATH = os.path.join(HOME, ".codex", "auth.json")
 
 _REASONING_CACHE = {}
 _MAX_REASONING = 100
+_REASONING_LOCK = threading.Lock()
 
 
 def cache_reasoning(chat_req, reasoning_content):
@@ -33,9 +35,10 @@ def cache_reasoning(chat_req, reasoning_content):
     if not pc:
         return
     key = hashlib.sha256(pc.encode()).hexdigest()[:16]
-    _REASONING_CACHE[key] = reasoning_content
-    while len(_REASONING_CACHE) > _MAX_REASONING:
-        _REASONING_CACHE.pop(next(iter(_REASONING_CACHE)))
+    with _REASONING_LOCK:
+        _REASONING_CACHE[key] = reasoning_content
+        while len(_REASONING_CACHE) > _MAX_REASONING:
+            _REASONING_CACHE.pop(next(iter(_REASONING_CACHE)))
 
 
 # ── default config ───────────────────────────────────────────────────
@@ -111,7 +114,9 @@ def set_autostart(enable):
         if getattr(sys, 'frozen', False):
             target = f'start "" "{sys.executable}"'
         else:
-            target = f'start "" pythonw "{os.path.abspath(__file__)}"'
+            main_py = os.path.join(os.path.dirname(
+                os.path.abspath(__file__)), "..", "proxy_manager.py")
+            target = f'start "" pythonw "{os.path.normpath(main_py)}"'
         with open(STARTUP_BAT, "w") as f:
             f.write(f"@echo off\n{target}\n")
     else:

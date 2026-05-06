@@ -3,7 +3,7 @@
 import json
 import hashlib
 
-from .config import _REASONING_CACHE, cache_reasoning
+from .config import _REASONING_CACHE, _REASONING_LOCK, cache_reasoning
 
 
 class OpenAITranslateMixin:
@@ -87,7 +87,8 @@ class OpenAITranslateMixin:
                     pc = json.dumps(pc, ensure_ascii=False)
                 if pc:
                     key = hashlib.sha256(pc.encode()).hexdigest()[:16]
-                    rc = _REASONING_CACHE.get(key)
+                    with _REASONING_LOCK:
+                        rc = _REASONING_CACHE.get(key)
                     if rc:
                         m["reasoning_content"] = rc
 
@@ -288,8 +289,6 @@ class OpenAITranslateMixin:
                 continue
 
             if not raw.startswith("data:"):
-                continue
-            if raw == "data: [DONE]":
                 continue
 
             chunk = json_mod.loads(raw[6:])

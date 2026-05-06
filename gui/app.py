@@ -1,8 +1,6 @@
 """System-tray GUI for managing the proxy."""
 
 import os
-import sys
-import json
 import queue
 import threading
 import tkinter as tk
