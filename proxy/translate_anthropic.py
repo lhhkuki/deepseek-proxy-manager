@@ -42,10 +42,9 @@ class AnthropicTranslateMixin:
 
             # ── function_call → assistant message with tool_use
             if item_type == "function_call":
-                if item.get("name") == "spawn_agent":
-                    continue
-                # Skip orphaned function_calls that have no matching output
-                if item.get("call_id", "") and item["call_id"] not in output_ids:
+                # Skip function_calls that have no matching output
+                cid = item.get("call_id", "")
+                if cid and cid not in output_ids:
                     continue
                 args = item.get("arguments", "{}")
                 if isinstance(args, str):
@@ -239,9 +238,6 @@ class AnthropicTranslateMixin:
         for tool in tools:
             t = tool.get("type", "")
             if t not in ("", "function", "custom", "namespace"):
-                continue
-            name = tool.get("name", tool.get("function", {}).get("name", ""))
-            if name == "spawn_agent":
                 continue
             if "function" in tool:
                 fn = tool["function"]
