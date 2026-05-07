@@ -1,9 +1,9 @@
-"""OpenAI Responses API → Chat Completions API translation mixin."""
+"""OpenAI Responses API to Chat Completions API translation mixin."""
 
 import json
 import hashlib
 
-from .config import _REASONING_CACHE, _REASONING_LOCK, cache_reasoning
+from .config import _REASONING_CACHE, _REASONING_LOCK, cache_reasoning, LOG_QUEUE
 
 
 class OpenAITranslateMixin:
@@ -12,8 +12,7 @@ class OpenAITranslateMixin:
     def _to_chat(self, req):
         messages = []
         instr = req.get("instructions", "")
-        if instr:
-            messages.append({"role": "system", "content": instr})
+        has_system_from_input = False
 
         for item in req.get("input", []):
             item_type = item.get("type", "")
@@ -53,6 +52,8 @@ class OpenAITranslateMixin:
             role = self.ROLE_MAP.get(role, role)
             if role not in self.ALLOWED_ROLES:
                 role = "user"
+            if role == "system":
+                has_system_from_input = True
             content = self._extract_text(item.get("content", ""))
 
             msg = {"role": role, "content": content}
@@ -77,7 +78,10 @@ class OpenAITranslateMixin:
 
             messages.append(msg)
 
-        # Re-inject cached reasoning_content
+        if instr and not has_system_from_input:
+            messages.insert(0, {"role": "system", "content": instr})
+
+        # Inject cached reasoning_content where available
         for i, m in enumerate(messages):
             if (m.get("role") == "assistant"
                     and not m.get("reasoning_content") and i > 0):
@@ -86,32 +90,46 @@ class OpenAITranslateMixin:
                 if isinstance(pc, list):
                     pc = json.dumps(pc, ensure_ascii=False)
                 if pc:
-                    key = hashlib.sha256(pc.encode()).hexdigest()[:16]
+                    key = hashlib.sha256(pc.encode()).hexdigest()
                     with _REASONING_LOCK:
                         rc = _REASONING_CACHE.get(key)
                     if rc:
                         m["reasoning_content"] = rc
-
         model = self._map_model(req.get("model", "deepseek-v4-pro"))
         chat = {
             "model": model,
             "messages": messages,
             "stream": req.get("stream", False),
         }
-        if "pro" in model or "reasoner" in model:
-            chat["thinking"] = {"type": "enabled"}
+        if req.get("stream"):
+            chat["stream_options"] = {"include_usage": True}
+        # Ensure tool_calls messages have reasoning_content before enabling thinking
+        reasoning = req.get("reasoning")
+        if reasoning is None:
+            from .config import get_active_model_config
+            mc = get_active_model_config()
+            reasoning = mc.get("reasoning", False) if mc else False
+        if reasoning:
+            fixed = 0
+            for i, m in enumerate(messages):
+                if (m.get("role") == "assistant" and m.get("tool_calls")
+                        and not m.get("reasoning_content")):
+                    m["reasoning_content"] = ""
+                    fixed += 1
+            LOG_QUEUE.put(f"Thinking enabled, fixed {fixed} missing reasoning_content")
+            chat["thinking"] = {"type": "enabled", "budget_tokens": 8192}
         for k in ("temperature", "top_p", "frequency_penalty",
                   "presence_penalty"):
             if k in req:
                 chat[k] = req[k]
         if "max_output_tokens" in req:
-            chat["max_tokens"] = req["max_output_tokens"]
+            chat["max_completion_tokens"] = req["max_output_tokens"]
         if "tools" in req:
             tools = self._xlat_tools(req["tools"])
             if tools:
                 chat["tools"] = tools
         if "tool_choice" in req:
-            chat["tool_choice"] = req["tool_choice"]
+            chat["tool_choice"] = self._xlat_tool_choice(req["tool_choice"])
         text_cfg = req.get("text", {})
         if isinstance(text_cfg, dict) and "format" in text_cfg:
             chat["response_format"] = text_cfg["format"]
@@ -133,236 +151,225 @@ class OpenAITranslateMixin:
                         fn[k] = tool[k]
                 result.append({"type": "function", "function": fn})
             else:
-                fn = {"name": tool.get(
-                    "id", tool.get("name", f"tool_{uuid.uuid4().hex[:8]}"))}
-                if "description" in tool:
-                    fn["description"] = tool["description"]
-                result.append({"type": "function", "function": fn})
+                result.append(tool)
         return result
 
-    def _to_resp(self, chat_resp, chat_req=None):
-        import time
+    def _xlat_tool_choice(self, tool_choice):
+        if isinstance(tool_choice, str):
+            if tool_choice in ("auto", "none", "required"):
+                return tool_choice
+            if tool_choice == "any":
+                return "required"
+            return tool_choice
+        if isinstance(tool_choice, dict):
+            tc_type = tool_choice.get("type", "")
+            if tc_type in ("function", "tool"):
+                return {"type": "function",
+                        "function": {"name": tool_choice.get("name", "")}}
+        return tool_choice
+
+    def _to_resp(self, chat_resp, chat_req):
+        import json as json_mod
+        rid = chat_resp.get("id", "")
+        model = chat_resp.get("model", chat_req.get("model", ""))
         choice = (chat_resp.get("choices") or [{}])[0]
         msg = choice.get("message", {})
-        usage = chat_resp.get("usage", {})
-        rid = chat_resp.get("id", self._gid("resp_"))
-        mid = self._gid("msg_")
-        content = msg.get("content") or ""
-        parts = [{"type": "output_text", "text": content, "annotations": []}]
-        output = [{"id": mid, "type": "message", "role": "assistant",
-                   "content": parts}]
+        content = msg.get("content", "")
+        tcs = msg.get("tool_calls") or []
 
-        rc = msg.get("reasoning_content", "")
-        if rc and chat_req:
-            cache_reasoning(chat_req, rc)
-
-        for tc in msg.get("tool_calls") or []:
-            fn = tc.get("function", {})
-            output.append({
-                "id": self._gid("fc_"),
+        output_items = []
+        if content:
+            output_items.append({
+                "id": self._gid("msg_"),
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": content,
+                             "annotations": []}],
+            })
+        for tc in tcs:
+            output_items.append({
+                "id": tc.get("id", self._gid("fc_")),
                 "type": "function_call",
                 "call_id": tc.get("id", ""),
-                "name": fn.get("name", ""),
-                "arguments": fn.get("arguments", ""),
+                "name": tc.get("function", {}).get("name", ""),
+                "arguments": tc.get("function", {}).get("arguments", ""),
             })
 
+        usage = chat_resp.get("usage", {})
         return {
-            "id": rid, "object": "response",
-            "created_at": chat_resp.get("created", int(time.time())),
-            "model": chat_resp.get("model", "unknown"),
-            "status": "completed", "output": output,
+            "id": rid,
+            "object": "response",
+            "model": model,
+            "status": "completed",
+            "output": output_items,
             "usage": {
                 "input_tokens": usage.get("prompt_tokens", 0),
                 "output_tokens": usage.get("completion_tokens", 0),
                 "total_tokens": usage.get("total_tokens", 0),
-            }
+            },
         }
 
-    def _stream(self, chat_req):
-        """SSE stream proxy for OpenAI Chat Completions format."""
+    def _stream(self, chat_req, base_url, api_key):
         import json as json_mod
-        resp = self._do_fetch("/chat/completions", chat_req)
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-
         rid = self._gid("resp_")
         text_msg_id = self._gid("msg_")
         started = False
         text_closed = False
         full_text = ""
         full_reasoning = ""
-        usage_info = {}
         tcs = {}
+        usage_info = {"input_tokens": 0, "output_tokens": 0,
+                      "total_tokens": 0}
         output_items = []
 
-        def open_text_msg():
-            nonlocal text_closed
-            if text_closed:
-                new_id = self._gid("msg_")
-                tcs["__text_msg_id"] = new_id
-                self._sse("response.output_item.added", {
-                    "type": "response.output_item.added",
-                    "item": {"id": new_id, "type": "message",
-                             "role": "assistant", "content": []}
-                })
-                self._sse("response.content_part.added", {
-                    "type": "response.content_part.added",
-                    "item_id": new_id,
-                    "part": {"type": "output_text", "text": "",
-                             "annotations": []},
-                })
-                return new_id
-            return text_msg_id
-
         def close_text_msg():
-            nonlocal text_closed, full_text
-            if not text_closed and (full_text or started):
-                text_closed = True
-                cur_mid = tcs.pop("__text_msg_id", text_msg_id)
-                self._sse("response.output_text.done", {
-                    "type": "response.output_text.done",
-                    "item_id": cur_mid, "output_index": 0,
-                    "content_index": 0, "text": full_text,
-                })
-                self._sse("response.output_item.done", {
-                    "type": "response.output_item.done",
-                    "item": {"id": cur_mid, "type": "message",
-                             "role": "assistant",
-                             "content": [{"type": "output_text",
-                                         "text": full_text,
-                                         "annotations": []}]}
-                })
-                output_items.append({
-                    "id": cur_mid, "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": full_text,
-                                "annotations": []}]
-                })
+            nonlocal text_closed
+            text_closed = True
+            self._sse("response.output_text.done", {
+                "type": "response.output_text.done",
+                "item_id": text_msg_id, "output_index": 0,
+                "content_index": 0, "text": full_text,
+            })
+            self._sse("response.output_item.done", {
+                "type": "response.output_item.done",
+                "item": {"id": text_msg_id, "type": "message",
+                         "role": "assistant",
+                         "content": [{"type": "output_text",
+                                      "text": full_text,
+                                      "annotations": []}]}
+            })
 
-        for line in resp:
-            raw = line.decode("utf-8").strip()
-            if not raw or raw.startswith(":"):
-                continue
+        try:
+            resp = self._do_fetch("/chat/completions", chat_req, base_url, api_key)
+        except Exception:
+            self._safe_json(502, {"error": "Upstream request failed"})
+            return
 
-            if raw == "data: [DONE]":
-                if not text_closed and full_text:
-                    close_text_msg()
-                for idx in sorted(tcs.keys()):
-                    if idx == "__text_msg_id":
-                        continue
-                    tc = tcs[idx]
-                    self._sse("response.function_call_arguments.done", {
-                        "type": "response.function_call_arguments.done",
-                        "item_id": tc["fc_id"],
-                        "name": tc["name"],
-                        "arguments": tc["args"],
-                    })
-                    self._sse("response.output_item.done", {
-                        "type": "response.output_item.done",
-                        "item": {"id": tc["fc_id"],
-                                 "type": "function_call",
-                                 "call_id": tc["call_id"],
-                                 "name": tc["name"],
-                                 "arguments": tc["args"]}
-                    })
-                    output_items.append({
-                        "id": tc["fc_id"], "type": "function_call",
-                        "call_id": tc["call_id"], "name": tc["name"],
-                        "arguments": tc["args"]
-                    })
-                if full_reasoning:
-                    cache_reasoning(chat_req, full_reasoning)
-                self._sse("response.completed", {
-                    "type": "response.completed",
-                    "response": {
-                        "id": rid, "object": "response",
-                        "model": chat_req["model"],
-                        "status": "completed", "output": output_items,
-                        "usage": usage_info,
-                    }
-                })
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-                continue
-
-            if not raw.startswith("data:"):
-                continue
-
-            chunk = json_mod.loads(raw[6:])
-            choice = (chunk.get("choices") or [{}])[0]
-            delta = choice.get("delta", {})
-
-            if not started:
-                started = True
-                self._sse("response.created", {
-                    "type": "response.created",
-                    "response": {"id": rid, "object": "response",
-                                 "model": chat_req["model"],
-                                 "status": "in_progress", "output": []}
-                })
-                self._sse("response.output_item.added", {
-                    "type": "response.output_item.added",
-                    "item": {"id": text_msg_id, "type": "message",
-                             "role": "assistant", "content": []}
-                })
-                self._sse("response.content_part.added", {
-                    "type": "response.content_part.added",
-                    "item_id": text_msg_id,
-                    "part": {"type": "output_text", "text": "",
-                             "annotations": []},
-                })
-
-            text = delta.get("content", "")
-            if text:
-                full_text += text
-                self._sse("response.output_text.delta", {
-                    "type": "response.output_text.delta",
-                    "item_id": text_msg_id, "output_index": 0,
-                    "content_index": 0, "delta": text,
-                })
-
-            rc_delta = delta.get("reasoning_content", "")
-            if rc_delta:
-                full_reasoning += rc_delta
-
-            for tc in (delta.get("tool_calls") or []):
-                idx = tc.get("index", 0)
-                if idx not in tcs:
-                    if not text_closed:
+        try:
+            for raw in resp:
+                if not raw:
+                    continue
+                raw = raw.decode(errors="replace")
+                if raw.strip() == "data: [DONE]":
+                    if not text_closed and full_text:
                         close_text_msg()
-                    fc_id = self._gid("fc_")
-                    tcs[idx] = {
-                        "call_id": tc.get("id", ""),
-                        "name": tc.get("function", {}).get("name", ""),
-                        "fc_id": fc_id,
-                        "args": "",
-                    }
+                    for tc in tcs.values():
+                        self._sse("response.function_call_arguments.done", {
+                            "type": "response.function_call_arguments.done",
+                            "item_id": tc["fc_id"],
+                            "name": tc["name"],
+                            "arguments": tc["args"],
+                        })
+                        self._sse("response.output_item.done", {
+                            "type": "response.output_item.done",
+                            "item": {"id": tc["fc_id"],
+                                     "type": "function_call",
+                                     "call_id": tc["call_id"],
+                                     "name": tc["name"],
+                                     "arguments": tc["args"]}
+                        })
+                        output_items.append({
+                            "id": tc["fc_id"], "type": "function_call",
+                            "call_id": tc["call_id"], "name": tc["name"],
+                            "arguments": tc["args"]
+                        })
+                    if full_reasoning:
+                        cache_reasoning(chat_req, full_reasoning)
+                    self._sse("response.completed", {
+                        "type": "response.completed",
+                        "response": {
+                            "id": rid, "object": "response",
+                            "model": chat_req["model"],
+                            "status": "completed", "output": output_items,
+                            "usage": usage_info,
+                        }
+                    })
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                    continue
+
+                if not raw.startswith("data:"):
+                    continue
+
+                chunk = json_mod.loads(raw[6:])
+                choice = (chunk.get("choices") or [{}])[0]
+                delta = choice.get("delta", {})
+
+                if not started:
+                    started = True
+                    self._sse("response.created", {
+                        "type": "response.created",
+                        "response": {"id": rid, "object": "response",
+                                     "model": chat_req["model"],
+                                     "status": "in_progress", "output": []}
+                    })
                     self._sse("response.output_item.added", {
                         "type": "response.output_item.added",
-                        "item": {"id": fc_id, "type": "function_call",
-                                 "call_id": tcs[idx]["call_id"],
-                                 "name": tcs[idx]["name"],
-                                 "arguments": ""}
+                        "item": {"id": text_msg_id, "type": "message",
+                                 "role": "assistant", "content": []}
                     })
-                fn_name = tc.get("function", {}).get("name", "")
-                if fn_name and not tcs[idx]["name"]:
-                    tcs[idx]["name"] = fn_name
-                fn_args = tc.get("function", {}).get("arguments", "")
-                if fn_args:
-                    tcs[idx]["args"] += fn_args
-                    self._sse("response.function_call_arguments.delta", {
-                        "type": "response.function_call_arguments.delta",
-                        "item_id": tcs[idx]["fc_id"],
-                        "delta": fn_args,
+                    self._sse("response.content_part.added", {
+                        "type": "response.content_part.added",
+                        "item_id": text_msg_id,
+                        "part": {"type": "output_text", "text": "",
+                                 "annotations": []},
                     })
 
-            u = chunk.get("usage")
-            if u:
-                usage_info = {
-                    "input_tokens": u.get("prompt_tokens", 0),
-                    "output_tokens": u.get("completion_tokens", 0),
-                    "total_tokens": u.get("total_tokens", 0),
-                }
+                text = delta.get("content", "")
+                if text:
+                    full_text += text
+                    self._sse("response.output_text.delta", {
+                        "type": "response.output_text.delta",
+                        "item_id": text_msg_id, "output_index": 0,
+                        "content_index": 0, "delta": text,
+                    })
+
+                rc_delta = delta.get("reasoning_content", "")
+                if rc_delta:
+                    full_reasoning += rc_delta
+
+                for tc in (delta.get("tool_calls") or []):
+                    idx = tc.get("index", 0)
+                    if idx not in tcs:
+                        if not text_closed:
+                            close_text_msg()
+                        fc_id = self._gid("fc_")
+                        tcs[idx] = {
+                            "call_id": tc.get("id", ""),
+                            "name": tc.get("function", {}).get("name", ""),
+                            "fc_id": fc_id,
+                            "args": "",
+                        }
+                        self._sse("response.output_item.added", {
+                            "type": "response.output_item.added",
+                            "item": {"id": fc_id, "type": "function_call",
+                                     "call_id": tcs[idx]["call_id"],
+                                     "name": tcs[idx]["name"],
+                                     "arguments": ""}
+                        })
+                    fn_name = tc.get("function", {}).get("name", "")
+                    if fn_name and not tcs[idx]["name"]:
+                        tcs[idx]["name"] = fn_name
+                    fn_args = tc.get("function", {}).get("arguments", "")
+                    if fn_args:
+                        tcs[idx]["args"] += fn_args
+                        self._sse("response.function_call_arguments.delta", {
+                            "type": "response.function_call_arguments.delta",
+                            "item_id": tcs[idx]["fc_id"],
+                            "delta": fn_args,
+                        })
+
+                u = chunk.get("usage")
+                if u:
+                    usage_info = {
+                        "input_tokens": u.get("prompt_tokens", 0),
+                        "output_tokens": u.get("completion_tokens", 0),
+                        "total_tokens": u.get("total_tokens", 0),
+                    }
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass

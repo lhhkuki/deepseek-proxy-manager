@@ -62,7 +62,23 @@ class AnthropicTranslateMixin:
                     messages, "assistant", "tool_use", block)
                 continue
 
-            if item_type in ("reasoning", "item_reference"):
+            # ── reasoning → inject as thinking block into previous assistant msg
+            if item_type == "reasoning":
+                reasoning_content = self._extract_text(item.get("content", ""))
+                if reasoning_content:
+                    thinking_block = {"type": "thinking", "thinking": reasoning_content}
+                    # Find last assistant message to attach thinking to
+                    for j in range(len(messages) - 1, -1, -1):
+                        if messages[j].get("role") == "assistant":
+                            c = messages[j].get("content")
+                            if isinstance(c, list):
+                                c.insert(0, thinking_block)
+                            else:
+                                messages[j]["content"] = [thinking_block, {"type": "text", "text": c or ""}]
+                            break
+                continue
+
+            if item_type == "item_reference":
                 continue
 
             # ── regular message
@@ -125,7 +141,7 @@ class AnthropicTranslateMixin:
             "model": model,
             "messages": messages,
             "stream": req.get("stream", False),
-            "max_tokens": req.get("max_output_tokens", 4096),
+            "max_tokens": req.get("max_output_tokens", 32768),
         }
         if system_parts:
             body["system"] = (system_parts[0] if len(system_parts) == 1
@@ -133,6 +149,14 @@ class AnthropicTranslateMixin:
         for k in ("temperature", "top_p",):
             if k in req:
                 body[k] = req[k]
+        # Reasoning: boolean toggle from model config
+        reasoning = req.get("reasoning")
+        if reasoning is None:
+            from .config import get_active_model_config
+            mc = get_active_model_config()
+            reasoning = mc.get("reasoning", False) if mc else False
+        if reasoning:
+            body["thinking"] = {"type": "enabled", "budget_tokens": 8192}
         tools = req.get("tools", [])
         if tools:
             anthro_tools = self._xlat_tools_anthropic(tools)
@@ -272,10 +296,13 @@ class AnthropicTranslateMixin:
 
         content_blocks = anthro_resp.get("content", [])
         text_parts = []
+        reasoning_text = ""
         for block in content_blocks:
             bt = block.get("type", "")
             if bt == "text":
                 text_parts.append(block.get("text", ""))
+            elif bt == "thinking":
+                reasoning_text += block.get("thinking", "")
             elif bt == "tool_use":
                 output.append({
                     "id": self._gid("fc_"),
@@ -285,6 +312,12 @@ class AnthropicTranslateMixin:
                     "arguments": json_mod.dumps(
                         block.get("input", {}), ensure_ascii=False),
                 })
+        if reasoning_text:
+            output.append({
+                "id": self._gid("reasoning_"),
+                "type": "reasoning",
+                "content": reasoning_text,
+            })
 
         if text_parts:
             output.insert(0, {
@@ -306,8 +339,8 @@ class AnthropicTranslateMixin:
             }
         }
 
-    def _stream_anthropic(self, anthro_req):
-        resp = self._do_fetch("/messages", anthro_req)
+    def _stream_anthropic(self, anthro_req, base_url, api_key):
+        resp = self._do_fetch("/messages", anthro_req, base_url, api_key)
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")

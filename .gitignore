@@ -10,12 +10,19 @@ __pycache__/
 # Config with secrets (auto-generated on first run)
 auth.json
 proxy_config.json
+proxy_api_key.enc
 
 # Auto-generated
 proxy_icon.ico
 
 # Logs
 *.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/release/
+frontend/*.log
 
 # IDE
 .vscode/

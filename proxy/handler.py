@@ -1,4 +1,4 @@
-"""HTTP request handler — routes and helpers."""
+"""HTTP request handler - routes and helpers."""
 
 import json
 import sys
@@ -9,9 +9,17 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from http.client import RemoteDisconnected
 
-from .config import load_config, load_api_key, LOG_QUEUE
+from .config import load_config, get_active_model_config, LOG_QUEUE
 from .translate_openai import OpenAITranslateMixin
 from .translate_anthropic import AnthropicTranslateMixin
+
+MAX_BODY_SIZE = 10 * 1024 * 1024
+
+CORS_HEADERS = [
+    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+    ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
+]
 
 
 class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
@@ -24,10 +32,14 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
     RETRY_DELAY = 2
 
     def log_request(self, code="-", size="-"):
-        msg = f"{self.command} {self.path} → {code}"
+        msg = "{0} {1} -> {2}".format(self.command, self.path, code)
         LOG_QUEUE.put(msg)
 
-    # ── HTTP routing ──────────────────────────────────────────────
+    def do_OPTIONS(self):
+        self.send_response(204)
+        for name, value in CORS_HEADERS:
+            self.send_header(name, value)
+        self.end_headers()
 
     def do_GET(self):
         if self.path == "/v1/models":
@@ -71,18 +83,25 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             self.send_response(404)
             self.end_headers()
 
-    # ── routing helpers ───────────────────────────────────────────
-
-    def _is_anthropic_upstream(self):
-        cfg = load_config()
-        base = cfg.get("deepseek_base", "")
-        return "kimi.com/coding" in base
+    def _is_anthropic_upstream(self, base_url):
+        return "kimi.com/coding" in base_url
 
     def _handle_responses(self):
         body = self._read_body()
         stream = body.get("stream", False)
+        model_cfg = get_active_model_config()
 
-        if self._is_anthropic_upstream():
+        if not model_cfg:
+            self._safe_json(500, {"error": "No model configured"})
+            return
+
+        base_url = model_cfg.get("base_url", "https://api.deepseek.com")
+        api_key = model_cfg.get("api_key", "")
+        if not api_key:
+            self._safe_json(401, {"error": "API Key not configured for this model. Please add it in the proxy settings."})
+            return
+
+        if self._is_anthropic_upstream(base_url):
             req_body = self._to_anthropic(body)
             endpoint = "/messages"
         else:
@@ -91,13 +110,13 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
 
         try:
             if stream:
-                if self._is_anthropic_upstream():
-                    self._stream_anthropic(req_body)
+                if self._is_anthropic_upstream(base_url):
+                    self._stream_anthropic(req_body, base_url, api_key)
                 else:
-                    self._stream(req_body)
+                    self._stream(req_body, base_url, api_key)
             else:
-                data = self._fetch(endpoint, req_body)
-                if self._is_anthropic_upstream():
+                data = self._fetch(endpoint, req_body, base_url, api_key)
+                if self._is_anthropic_upstream(base_url):
                     self._json(200, self._from_anthropic_resp(data))
                 else:
                     self._json(200, self._to_resp(data, req_body))
@@ -107,25 +126,25 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 err = e.read().decode(errors="replace")[:300]
             except Exception:
                 pass
-            LOG_QUEUE.put(f"Upstream {e.code}: {err}")
-            self._safe_json(e.code, {"error": f"Upstream {e.code}: {err}"})
+            LOG_QUEUE.put("Upstream {0}: {1}".format(e.code, err))
+            self._safe_json(e.code, {"error": "Upstream {0}: {1}".format(e.code, err)})
         except ConnectionAbortedError:
             pass
         except Exception as e:
-            LOG_QUEUE.put(f"FATAL: {e}")
-            print(f"[FATAL] {traceback.format_exc()}",
-                  file=sys.stderr, flush=True)
+            LOG_QUEUE.put("FATAL: {0}".format(e))
+            print("[FATAL] " + traceback.format_exc(), file=sys.stderr, flush=True)
             self._safe_json(502, {"error": str(e)})
 
     def _pass_through(self, path):
         body = self._read_body()
         try:
-            data = self._fetch(f"/{path}", body)
+            model_cfg = get_active_model_config()
+            base_url = model_cfg.get("base_url", "") if model_cfg else ""
+            api_key = model_cfg.get("api_key", "") if model_cfg else ""
+            data = self._fetch_with_method("/{0}".format(path), body, base_url, api_key, method=self.command)
             self._json(200, data)
         except Exception as e:
             self._json(500, {"error": str(e)})
-
-    # ── shared helpers ────────────────────────────────────────────
 
     @staticmethod
     def _extract_text(content):
@@ -153,7 +172,6 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
 
     @staticmethod
     def _extract_content_blocks(content):
-        """Extract content as list of blocks, preserving image data."""
         if isinstance(content, str):
             return [{"type": "text", "text": content}]
         if isinstance(content, list):
@@ -175,23 +193,33 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
 
     def _map_model(self, model_name):
         cfg = load_config()
-        known = {m["id"] for m in cfg.get("models", [])
-                 if m.get("enabled", True)}
+        models = cfg.get("models", [])
+        enabled_models = [m for m in models if m.get("enabled", True)]
+        if not enabled_models:
+            LOG_QUEUE.put("No enabled models, falling back to deepseek-chat")
+            return "deepseek-chat"
+        known = {m["id"] for m in enabled_models}
         if model_name in known:
             return model_name
-        for m in cfg.get("models", []):
-            if m.get("enabled", True):
-                LOG_QUEUE.put(f"Mapped model '{model_name}' → '{m['id']}'")
-                return m["id"]
-        return "deepseek-chat"
+        for m in models:
+            if m["id"] == model_name:
+                LOG_QUEUE.put("Model '{0}' disabled, using fallback".format(model_name))
+                break
+        fallback = enabled_models[0]["id"]
+        LOG_QUEUE.put("Mapped unknown model '{0}' -> '{1}'".format(model_name, fallback))
+        return fallback
 
     def _read_body(self):
         cl = int(self.headers.get("Content-Length", 0))
+        if cl > MAX_BODY_SIZE:
+            raise ValueError("Request body too large: {0} bytes".format(cl))
         return json.loads(self.rfile.read(cl)) if cl > 0 else {}
 
     def _json(self, status, data):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        for name, value in CORS_HEADERS:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
 
@@ -202,39 +230,45 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             pass
 
     def _sse(self, event_type, data):
-        self.wfile.write(f"event: {event_type}\n".encode())
-        self.wfile.write(
-            f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
-        self.wfile.flush()
+        try:
+            self.wfile.write("event: {0}\n".format(event_type).encode())
+            self.wfile.write(
+                "data: {0}\n\n".format(json.dumps(data, ensure_ascii=False)).encode())
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
 
     def _gid(self, prefix=""):
         import uuid
-        return f"{prefix}{uuid.uuid4().hex[:24]}"
+        return "{0}{1}".format(prefix, uuid.uuid4().hex[:24])
 
     @classmethod
-    def _do_fetch(cls, path, data, timeout=120):
-        cfg = load_config()
-        base = cfg.get("deepseek_base", "https://api.deepseek.com")
-        key = load_api_key()
-        is_anthropic = "kimi.com/coding" in base
+    def _do_fetch(cls, path, data, base_url, api_key, timeout=120):
+        is_anthropic = "kimi.com/coding" in base_url
 
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "ClaudeCode/1.0",
         }
         if is_anthropic:
-            headers["x-api-key"] = key
+            headers["x-api-key"] = api_key
             headers["anthropic-version"] = "2023-06-01"
         else:
-            headers["Authorization"] = f"Bearer {key}"
+            headers["Authorization"] = "Bearer {0}".format(api_key)
 
         last_err = None
         for attempt in range(cls.MAX_RETRIES):
             try:
-                req = Request(f"{base}{path}",
+                req = Request("{0}{1}".format(base_url, path),
                               data=json.dumps(data).encode(),
                               headers=headers, method="POST")
                 return urlopen(req, timeout=timeout)
+            except HTTPError as e:
+                if 400 <= e.code < 500:
+                    raise
+                last_err = e
+                if attempt < cls.MAX_RETRIES - 1:
+                    time.sleep(cls.RETRY_DELAY * (attempt + 1))
             except (RemoteDisconnected, ConnectionResetError,
                     TimeoutError, OSError) as e:
                 last_err = e
@@ -242,6 +276,36 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                     time.sleep(cls.RETRY_DELAY * (attempt + 1))
         raise last_err or RuntimeError("max retries exceeded")
 
-    def _fetch(self, path, data):
-        resp = self._do_fetch(path, data)
-        return json.loads(resp.read())
+    def _fetch(self, path, data, base_url, api_key):
+        resp = self._do_fetch(path, data, base_url, api_key)
+        try:
+            return json.loads(resp.read())
+        finally:
+            resp.close()
+
+    def _fetch_with_method(self, path, data, base_url, api_key, method="POST"):
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "ClaudeCode/1.0",
+        }
+        for hdr in ("X-Request-ID", "X-Client-Name"):
+            val = self.headers.get(hdr)
+            if val:
+                headers[hdr] = val
+
+        is_anthropic = "kimi.com/coding" in base_url
+        if is_anthropic:
+            headers["x-api-key"] = api_key
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = "Bearer {0}".format(api_key)
+
+        req_data = json.dumps(data).encode() if data else b""
+        req = Request("{0}{1}".format(base_url, path),
+                      data=req_data,
+                      headers=headers, method=method)
+        resp = urlopen(req, timeout=120)
+        try:
+            return json.loads(resp.read())
+        finally:
+            resp.close()

@@ -1,2 +1,5 @@
 @echo off
-start "" pythonw "%~dp0proxy_manager.py"
+cd /d "%~dp0"
+echo Starting AI Proxy Manager...
+python proxy_manager.py
+pause
