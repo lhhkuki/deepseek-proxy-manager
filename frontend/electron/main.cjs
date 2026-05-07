@@ -18,28 +18,51 @@ function findBackendScript() {
   return null
 }
 
+function installDeps(scriptDir, callback) {
+  const reqPath = path.join(scriptDir, 'requirements.txt')
+  if (!fs.existsSync(reqPath)) {
+    console.log('No requirements.txt found, skipping pip install')
+    callback()
+    return
+  }
+  console.log(`Installing Python dependencies from ${reqPath}...`)
+  const pip = spawn('pip', ['install', '-r', reqPath, '-q'], {
+    stdio: 'pipe', windowsHide: true,
+  })
+  pip.on('close', (code) => {
+    console.log(`pip install exited with code ${code}`)
+    callback()
+  })
+  pip.stderr.on('data', (d) => { console.error(`[pip] ${d}`) })
+}
+
 function startPythonBackend() {
   const scriptPath = findBackendScript()
   if (!scriptPath) {
     console.error('Could not find api_server.py')
     return
   }
-  console.log(`Starting backend: ${scriptPath}`)
-  pythonProcess = spawn('python', [scriptPath], {
-    stdio: 'pipe',
-    windowsHide: true,
-  })
-  pythonProcess.on('error', (err) => {
-    console.error(`Failed to start Python: ${err.message}`)
-  })
-  pythonProcess.stdout.on('data', (data) => {
-    console.log(`[Python] ${data}`)
-  })
-  pythonProcess.stderr.on('data', (data) => {
-    console.error(`[Python Error] ${data}`)
-  })
-  pythonProcess.on('close', (code) => {
-    console.log(`Python process exited with code ${code}`)
+  const scriptDir = path.dirname(scriptPath)
+
+  // Auto-install Python dependencies, then start backend
+  installDeps(scriptDir, () => {
+    console.log(`Starting backend: ${scriptPath}`)
+    pythonProcess = spawn('python', [scriptPath], {
+      stdio: 'pipe',
+      windowsHide: true,
+    })
+    pythonProcess.on('error', (err) => {
+      console.error(`Failed to start Python: ${err.message}`)
+    })
+    pythonProcess.stdout.on('data', (data) => {
+      console.log(`[Python] ${data}`)
+    })
+    pythonProcess.stderr.on('data', (data) => {
+      console.error(`[Python Error] ${data}`)
+    })
+    pythonProcess.on('close', (code) => {
+      console.log(`Python process exited with code ${code}`)
+    })
   })
 }
 

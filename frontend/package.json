@@ -32,7 +32,21 @@
         "nsis": {
             "oneClick": false,
             "allowToChangeInstallationDirectory": true
-        }
+        },
+        "extraFiles": [
+            {
+                "from": "../api_server.py",
+                "to": "api_server.py"
+            },
+            {
+                "from": "../proxy",
+                "to": "proxy"
+            },
+            {
+                "from": "../requirements.txt",
+                "to": "requirements.txt"
+            }
+        ]
     },
     "dependencies": {
         "framer-motion": "^12.38.0",
