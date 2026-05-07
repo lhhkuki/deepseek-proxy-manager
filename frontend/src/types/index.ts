@@ -15,8 +15,5 @@ export interface Config {
 export interface LogEntry {
   id: string;
   timestamp: string;
-  method: string;
-  path: string;
-  status: number;
   message: string;
 }

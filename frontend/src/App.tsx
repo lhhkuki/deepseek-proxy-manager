@@ -28,12 +28,17 @@ function App() {
   // Load initial data
   useEffect(() => {
     loadData()
-    const interval = setInterval(() => {
-      loadLogs()
-      loadStatus()
-    }, 1000)
-    return () => clearInterval(interval)
+    const statusInterval = setInterval(loadStatus, 3000)
+    return () => clearInterval(statusInterval)
   }, [])
+
+  // Conditional log polling: only when on logs tab
+  useEffect(() => {
+    if (activeTab !== 'logs') return
+    loadLogs() // immediate load
+    const interval = setInterval(loadLogs, 1000)
+    return () => clearInterval(interval)
+  }, [activeTab])
 
   const loadData = async () => {
     try {
@@ -47,9 +52,9 @@ function App() {
 
   const loadLogs = async () => {
     try {
-      const newLogs = await api.getLogs()
-      if (newLogs.length > 0) {
-        setLogs(prev => [...prev, ...newLogs].slice(-500))
+      const all = await api.getLogs()
+      if (all.length > 0) {
+        setLogs(all.slice(-500))
       }
     } catch (e) {
       console.error('Failed to load logs:', e)
@@ -116,12 +121,18 @@ function App() {
   }, [])
 
   const handleToggleProxy = useCallback(async () => {
-    if (isRunning) {
-      await api.stopProxy()
-    } else {
-      await api.startProxy()
+    try {
+      if (isRunning) {
+        await api.stopProxy()
+        setIsRunning(false)
+      } else {
+        await api.startProxy()
+        setIsRunning(true)
+      }
+    } catch (e) {
+      console.error('Failed to toggle proxy:', e)
+      alert('操作失败: ' + (e instanceof Error ? e.message : String(e)))
     }
-    setIsRunning(!isRunning)
   }, [isRunning])
 
   return (

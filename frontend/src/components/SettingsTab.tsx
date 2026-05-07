@@ -1,6 +1,6 @@
 ﻿import { useState } from 'react'
-import { motion } from 'framer-motion'
-import { Settings, Save } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Settings, Save, CheckCircle } from 'lucide-react'
 
 interface SettingsTabProps {
   port: number;
@@ -9,12 +9,14 @@ interface SettingsTabProps {
 
 export default function SettingsTab({ port, onPortChange }: SettingsTabProps) {
   const [localPort, setLocalPort] = useState(port.toString())
+  const [saved, setSaved] = useState(false)
 
   const handleSave = () => {
     const p = parseInt(localPort)
     if (p >= 1 && p <= 65535) {
       onPortChange(p)
-      alert('设置已保存！')
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
     } else {
       alert('端口必须是 1-65535 的整数')
     }
@@ -47,7 +49,7 @@ export default function SettingsTab({ port, onPortChange }: SettingsTabProps) {
             <p className="text-xs text-[#aeaeb2] mt-1.5">修改端口后需要重启代理才能生效</p>
           </div>
 
-          <div className="pt-4 border-t border-[#f0f0f2]">
+          <div className="flex items-center gap-3 pt-4 border-t border-[#f0f0f2]">
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -57,6 +59,20 @@ export default function SettingsTab({ port, onPortChange }: SettingsTabProps) {
               <Save className="w-4 h-4" />
               保存设置
             </motion.button>
+
+            <AnimatePresence>
+              {saved && (
+                <motion.div
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  className="flex items-center gap-1.5 text-sm text-[#34c759]"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  已保存
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </motion.div>

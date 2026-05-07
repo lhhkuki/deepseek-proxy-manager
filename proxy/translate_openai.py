@@ -1,4 +1,4 @@
-"""OpenAI Responses API to Chat Completions API translation mixin."""
+﻿"""OpenAI Responses API to Chat Completions API translation mixin."""
 
 import json
 import hashlib
@@ -123,7 +123,7 @@ class OpenAITranslateMixin:
             if k in req:
                 chat[k] = req[k]
         if "max_output_tokens" in req:
-            chat["max_completion_tokens"] = req["max_output_tokens"]
+            chat["max_tokens"] = req["max_output_tokens"]
         if "tools" in req:
             tools = self._xlat_tools(req["tools"])
             if tools:
@@ -177,6 +177,10 @@ class OpenAITranslateMixin:
         content = msg.get("content", "")
         tcs = msg.get("tool_calls") or []
 
+        reasoning = msg.get("reasoning_content", "")
+        if reasoning:
+            cache_reasoning(chat_req, reasoning)
+
         output_items = []
         if content:
             output_items.append({
@@ -184,6 +188,15 @@ class OpenAITranslateMixin:
                 "type": "message",
                 "role": "assistant",
                 "content": [{"type": "output_text", "text": content,
+                             "annotations": []}],
+            })
+        elif reasoning:
+            # V4 Pro consumed all tokens on reasoning — include it as output
+            output_items.append({
+                "id": self._gid("msg_"),
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": reasoning[:500],
                              "annotations": []}],
             })
         for tc in tcs:
@@ -211,6 +224,12 @@ class OpenAITranslateMixin:
 
     def _stream(self, chat_req, base_url, api_key):
         import json as json_mod
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
         rid = self._gid("resp_")
         text_msg_id = self._gid("msg_")
         started = False
@@ -273,8 +292,6 @@ class OpenAITranslateMixin:
                             "call_id": tc["call_id"], "name": tc["name"],
                             "arguments": tc["args"]
                         })
-                    if full_reasoning:
-                        cache_reasoning(chat_req, full_reasoning)
                     self._sse("response.completed", {
                         "type": "response.completed",
                         "response": {
@@ -369,6 +386,49 @@ class OpenAITranslateMixin:
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
         finally:
+            if full_reasoning:
+                cache_reasoning(chat_req, full_reasoning)
+            # Ensure stream always gets completion — even if [DONE] was missed
+            if started:
+                if not text_closed and full_text:
+                    close_text_msg()
+                for tc in tcs.values():
+                    if tc.get("fc_id"):
+                        self._sse("response.function_call_arguments.done", {
+                            "type": "response.function_call_arguments.done",
+                            "item_id": tc["fc_id"],
+                            "name": tc.get("name", ""),
+                            "arguments": tc.get("args", ""),
+                        })
+                        self._sse("response.output_item.done", {
+                            "type": "response.output_item.done",
+                            "item": {"id": tc["fc_id"], "type": "function_call",
+                                     "call_id": tc["call_id"],
+                                     "name": tc.get("name", ""),
+                                     "arguments": tc.get("args", "")}
+                        })
+                        output_items.append({
+                            "id": tc["fc_id"], "type": "function_call",
+                            "call_id": tc["call_id"],
+                            "name": tc.get("name", ""),
+                            "arguments": tc.get("args", "")
+                        })
+                self._sse("response.completed", {
+                    "type": "response.completed",
+                    "response": {
+                        "id": rid, "object": "response",
+                        "model": chat_req["model"],
+                        "status": "completed", "output": output_items,
+                        "usage": usage_info,
+                    }
+                })
+                try:
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            total_out = usage_info.get("output_tokens", 0)
+            text_len = len(full_text)
             try:
                 resp.close()
             except Exception:

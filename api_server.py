@@ -1,4 +1,4 @@
-"""REST API for proxy manager UI."""
+﻿"""REST API for proxy manager UI."""
 
 import json
 import os
@@ -15,6 +15,7 @@ from proxy.config import (
     load_config, save_config, get_active_model_config,
     is_autostart_enabled, set_autostart,
     LOG_QUEUE, _REASONING_CACHE, _REASONING_LOCK,
+    write_pid_file, remove_pid_file,
 )
 from proxy.server import ProxyServer
 from proxy.handler import ProxyHandler
@@ -23,11 +24,32 @@ app = Flask(__name__)
 CORS(app)
 
 proxy_server = None
+_logs_history = []
+_logs_lock = threading.Lock()
+
 
 def set_proxy_instance(proxy):
     """Called by GUI to share the running proxy instance."""
     global proxy_server
     proxy_server = proxy
+
+
+def _drain_log_queue():
+    """Drain new messages from LOG_QUEUE into persistent history."""
+    global _logs_history
+    while not LOG_QUEUE.empty():
+        try:
+            msg = LOG_QUEUE.get_nowait()
+            with _logs_lock:
+                _logs_history.append({
+                    "id": str(datetime.now().timestamp()),
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "message": msg,
+                })
+                if len(_logs_history) > 500:
+                    _logs_history = _logs_history[-500:]
+        except Exception:
+            break
 
 
 @app.route('/api/config', methods=['GET'])
@@ -38,6 +60,8 @@ def get_config():
 @app.route('/api/config', methods=['POST'])
 def update_config():
     cfg = request.json
+    if not isinstance(cfg, dict):
+        return jsonify({"status": "error", "message": "Invalid config format"}), 400
     save_config(cfg)
     return jsonify({"status": "ok"})
 
@@ -51,6 +75,8 @@ def get_models():
 @app.route('/api/models', methods=['POST'])
 def update_models():
     models = request.json
+    if not isinstance(models, list):
+        return jsonify({"status": "error", "message": "Invalid models format"}), 400
     cfg = load_config()
     cfg["models"] = models
     save_config(cfg)
@@ -83,18 +109,9 @@ def delete_model(idx):
 
 @app.route('/api/logs', methods=['GET'])
 def get_logs():
-    logs = []
-    while not LOG_QUEUE.empty():
-        try:
-            msg = LOG_QUEUE.get_nowait()
-            logs.append({
-                "id": str(datetime.now().timestamp()),
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "message": msg,
-            })
-        except:
-            break
-    return jsonify(logs)
+    _drain_log_queue()
+    with _logs_lock:
+        return jsonify(list(_logs_history))
 
 
 @app.route('/api/status', methods=['GET'])
@@ -115,6 +132,7 @@ def start_proxy():
     port = cfg.get("port", 15800)
     try:
         proxy_server.start(port)
+        write_pid_file()
         return jsonify({"status": "ok", "port": port})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -125,6 +143,7 @@ def stop_proxy():
     global proxy_server
     if proxy_server:
         proxy_server.stop()
+        remove_pid_file()
     return jsonify({"status": "ok"})
 
 
@@ -146,6 +165,7 @@ if __name__ == "__main__":
     proxy = ProxyServer(ProxyHandler)
     try:
         proxy.start(port)
+        write_pid_file()
         set_proxy_instance(proxy)
         print(f"Proxy started on port {port}")
     except Exception as e:

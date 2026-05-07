@@ -1,5 +1,5 @@
-﻿import { motion } from 'framer-motion'
-import { Plus } from 'lucide-react'
+﻿import { motion, AnimatePresence } from 'framer-motion'
+import { Plus, ServerOff } from 'lucide-react'
 import ModelCard from './ModelCard'
 import type { Model } from '../types'
 
@@ -27,18 +27,34 @@ export default function ModelsTab({ models, onToggle, onDelete, onEdit, onAdd }:
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="space-y-3 pr-2">
-          {models.map((model, idx) => (
-            <ModelCard
-              key={model.id}
-              model={model}
-              index={idx}
-              onToggle={() => onToggle(idx)}
-              onDelete={() => onDelete(idx)}
-              onEdit={() => onEdit(model)}
-            />
-          ))}
-        </div>
+        <AnimatePresence mode="popLayout">
+          {models.length === 0 ? (
+            <motion.div
+              key="empty"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex flex-col items-center justify-center h-full text-[#aeaeb2]"
+            >
+              <ServerOff className="w-12 h-12 mb-3 opacity-30" />
+              <p className="text-sm">还没有配置模型</p>
+              <p className="text-xs mt-1">点击上方按钮添加你的第一个模型</p>
+            </motion.div>
+          ) : (
+            <div className="space-y-3 pr-2">
+              {models.map((model, idx) => (
+                <ModelCard
+                  key={model.id}
+                  model={model}
+                  index={idx}
+                  onToggle={() => onToggle(idx)}
+                  onDelete={() => onDelete(idx)}
+                  onEdit={() => onEdit(model)}
+                />
+              ))}
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   )

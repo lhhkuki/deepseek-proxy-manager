@@ -1,7 +1,10 @@
 """OpenAI Responses API → Anthropic Messages API translation mixin."""
 
 import json as json_mod
+import hashlib
 import uuid as _uuid
+
+from .config import LOG_QUEUE
 
 
 class AnthropicTranslateMixin:
@@ -156,6 +159,12 @@ class AnthropicTranslateMixin:
             mc = get_active_model_config()
             reasoning = mc.get("reasoning", False) if mc else False
         if reasoning:
+            for m in messages:
+                if (m.get("role") == "assistant"
+                        and isinstance(m.get("content"), list)
+                        and any(b.get("type") == "tool_use" for b in m["content"])
+                        and not any(b.get("type") == "thinking" for b in m["content"])):
+                    m["content"].insert(0, {"type": "thinking", "thinking": ""})
             body["thinking"] = {"type": "enabled", "budget_tokens": 8192}
         tools = req.get("tools", [])
         if tools:
@@ -318,6 +327,13 @@ class AnthropicTranslateMixin:
                 "type": "reasoning",
                 "content": reasoning_text,
             })
+            # Cache thinking for next turn — keyed by response text
+            cache_text = "".join(text_parts)
+            if cache_text:
+                from .config import _REASONING_CACHE, _REASONING_LOCK
+                key = hashlib.sha256(cache_text.encode()).hexdigest()
+                with _REASONING_LOCK:
+                    _REASONING_CACHE[key] = reasoning_text
 
         if text_parts:
             output.insert(0, {

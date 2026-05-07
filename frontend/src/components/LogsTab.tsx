@@ -1,5 +1,5 @@
 ﻿import { motion } from 'framer-motion'
-import { Terminal, Clock, ArrowRight } from 'lucide-react'
+import { Terminal, Clock } from 'lucide-react'
 import type { LogEntry } from '../types'
 
 interface LogsTabProps {
@@ -41,7 +41,7 @@ export default function LogsTab({ logs }: LogsTabProps) {
                   key={log.id}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.25, delay: idx * 0.02 }}
+                  transition={{ duration: 0.2, delay: Math.min(idx * 0.02, 0.3) }}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#f8f8f8] transition-colors"
                 >
                   <div className="flex items-center gap-1.5 shrink-0">
@@ -49,25 +49,7 @@ export default function LogsTab({ logs }: LogsTabProps) {
                     <span className="text-xs text-[#6e6e73] font-mono">{log.timestamp}</span>
                   </div>
 
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded shrink-0 ${
-                    log.method === 'GET' ? 'bg-blue-50 text-blue-600' :
-                    log.method === 'POST' ? 'bg-green-50 text-green-600' :
-                    'bg-gray-50 text-gray-600'
-                  }`}>
-                    {log.method}
-                  </span>
-
-                  <ArrowRight className="w-3 h-3 text-[#aeaeb2] shrink-0" />
-
-                  <span className="text-sm text-[#1d1d1f] truncate flex-1">{log.path}</span>
-
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded shrink-0 ${
-                    log.status < 300 ? 'bg-green-50 text-green-600' :
-                    log.status < 400 ? 'bg-yellow-50 text-yellow-600' :
-                    'bg-red-50 text-red-600'
-                  }`}>
-                    {log.status}
-                  </span>
+                  <span className="text-sm text-[#1d1d1f] truncate flex-1">{log.message}</span>
                 </motion.div>
               ))}
             </div>

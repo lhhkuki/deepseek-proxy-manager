@@ -1,16 +1,17 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 DeepSeek Proxy Manager — headless proxy + API server.
 GUI is provided by the Electron frontend (frontend/).
 """
 
 import os
+import atexit
 import sys
 import threading
 import time
 from proxy.config import (
     CONFIG_PATH, DEFAULT_CONFIG, save_config, load_config,
-    is_already_running, LOG_QUEUE,
+    is_already_running, LOG_QUEUE, write_pid_file, remove_pid_file,
 )
 from proxy.server import ProxyServer
 from proxy.handler import ProxyHandler
@@ -37,6 +38,11 @@ def main():
         print(f"Failed to start proxy: {e}")
         sys.exit(1)
 
+    # Write PID file after successful start
+    write_pid_file()
+    atexit.register(proxy.stop)
+    atexit.register(remove_pid_file)
+
     # Start Flask API (for frontend)
     api_port = 15801
     try:
@@ -60,7 +66,9 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("Shutting down...")
+    finally:
         proxy.stop()
+        remove_pid_file()
 
 
 if __name__ == "__main__":

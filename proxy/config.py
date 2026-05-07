@@ -114,7 +114,7 @@ def _migrate_old_config(cfg):
     for m in models:
         if not m.get("base_url"):
             m["base_url"] = base_url
-        if not m.get("api_key"):
+        if not m.get("api_key") and api_key:
             m["api_key"] = api_key
     cfg["models"] = models
     return cfg
@@ -165,7 +165,7 @@ def is_already_running(port):
                 pid = int(f.read().strip())
             import ctypes
             kernel = ctypes.windll.kernel32
-            handle = kernel.OpenProcess(1, False, pid)
+            handle = kernel.OpenProcess(0x0400, False, pid)
             if handle:
                 kernel.CloseHandle(handle)
                 try:
@@ -229,16 +229,7 @@ def set_autostart(enable):
             os.remove(STARTUP_BAT)
 
 
-BG_DARK      = "#ffffff"
-BG_CARD      = "#f5f5f7"
-BG_INPUT     = "#e8e8ed"
-FG_PRIMARY   = "#1d1d1f"
-FG_SECONDARY = "#6e6e73"
-FG_MUTED     = "#aeaeb2"
-ACCENT       = "#4A90D9"
-GREEN        = "#34c759"
-RED          = "#ff3b30"
-BORDER       = "#d2d2d7"
-FONT         = "Segoe UI"
-FONT_MONO    = "Consolas"
+# --- Legacy tkinter GUI colors (removed, frontend uses Tailwind CSS) ---
+
+
 

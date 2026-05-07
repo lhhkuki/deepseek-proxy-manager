@@ -1,6 +1,7 @@
-"""HTTP request handler - routes and helpers."""
+﻿"""HTTP request handler - routes and helpers."""
 
 import json
+import os
 import sys
 import time
 import traceback
@@ -30,6 +31,9 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
     ROLE_MAP = {"developer": "system"}
     MAX_RETRIES = 3
     RETRY_DELAY = 2
+
+    def _log_detail(self, msg):
+        LOG_QUEUE.put(msg)
 
     def log_request(self, code="-", size="-"):
         msg = "{0} {1} -> {2}".format(self.command, self.path, code)
@@ -78,7 +82,8 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         if self.path == "/v1/responses":
             self._handle_responses()
         elif self.path.startswith("/v1/"):
-            self._pass_through(self.path[3:])
+            # Other v1 endpoints not yet implemented
+            self._safe_json(501, {"error": "Not implemented"})
         else:
             self.send_response(404)
             self.end_headers()
@@ -87,28 +92,30 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         return "kimi.com/coding" in base_url
 
     def _handle_responses(self):
-        body = self._read_body()
-        stream = body.get("stream", False)
-        model_cfg = get_active_model_config()
-
-        if not model_cfg:
-            self._safe_json(500, {"error": "No model configured"})
-            return
-
-        base_url = model_cfg.get("base_url", "https://api.deepseek.com")
-        api_key = model_cfg.get("api_key", "")
-        if not api_key:
-            self._safe_json(401, {"error": "API Key not configured for this model. Please add it in the proxy settings."})
-            return
-
-        if self._is_anthropic_upstream(base_url):
-            req_body = self._to_anthropic(body)
-            endpoint = "/messages"
-        else:
-            req_body = self._to_chat(body)
-            endpoint = "/chat/completions"
-
         try:
+            body = self._read_body()
+            stream = body.get("stream", False)
+            model_cfg = get_active_model_config()
+
+            if not model_cfg:
+                self._safe_json(500, {"error": "No model configured"})
+                return
+
+            base_url = model_cfg.get("base_url", "https://api.deepseek.com")
+            api_key = model_cfg.get("api_key", "")
+            if not api_key:
+                self._safe_json(401, {"error": "API Key not configured for this model. Please add it in the proxy settings."})
+                return
+
+            LOG_QUEUE.put(f"REQ model={model_cfg.get('id','?')} stream={stream} base={base_url[:50]}")
+
+            if self._is_anthropic_upstream(base_url):
+                req_body = self._to_anthropic(body)
+                endpoint = "/messages"
+            else:
+                req_body = self._to_chat(body)
+                endpoint = "/chat/completions"
+
             if stream:
                 if self._is_anthropic_upstream(base_url):
                     self._stream_anthropic(req_body, base_url, api_key)
@@ -126,13 +133,13 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 err = e.read().decode(errors="replace")[:300]
             except Exception:
                 pass
-            LOG_QUEUE.put("Upstream {0}: {1}".format(e.code, err))
-            self._safe_json(e.code, {"error": "Upstream {0}: {1}".format(e.code, err)})
+            LOG_QUEUE.put(f"Upstream {e.code}: {err}")
+            self._safe_json(e.code, {"error": f"Upstream {e.code}: {err}"})
         except ConnectionAbortedError:
             pass
         except Exception as e:
-            LOG_QUEUE.put("FATAL: {0}".format(e))
-            print("[FATAL] " + traceback.format_exc(), file=sys.stderr, flush=True)
+            LOG_QUEUE.put(f"FATAL: {e}")
+            traceback.print_exc()
             self._safe_json(502, {"error": str(e)})
 
     def _pass_through(self, path):
@@ -309,3 +316,5 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             return json.loads(resp.read())
         finally:
             resp.close()
+
+
