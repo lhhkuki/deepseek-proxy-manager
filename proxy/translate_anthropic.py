@@ -33,12 +33,26 @@ class AnthropicTranslateMixin:
             # ── function_call_output → user message with tool_result
             if item_type == "function_call_output":
                 tc_id = item.get("call_id", "")
-                output_text = self._extract_text(item.get("output", ""))
-                block = {
-                    "type": "tool_result",
-                    "tool_use_id": tc_id,
-                    "content": output_text,
-                }
+                output_content = item.get("output", "")
+                blocks = self._extract_content_blocks(output_content)
+                has_image = any(b.get("type") == "image" for b in blocks)
+                if has_image:
+                    content_blocks = []
+                    for b in blocks:
+                        if b.get("type") == "image":
+                            img_url = b.get("image_url", "")
+                            if img_url.startswith("data:"):
+                                anthro_img = self._convert_image_to_anthropic(img_url)
+                                if anthro_img:
+                                    content_blocks.append(anthro_img)
+                            else:
+                                content_blocks.append({"type": "image", "source": {"type": "url", "url": img_url}})
+                        else:
+                            content_blocks.append({"type": "text", "text": b.get("text", "")})
+                    block = {"type": "tool_result", "tool_use_id": tc_id, "content": content_blocks}
+                else:
+                    output_text = self._extract_text(output_content)
+                    block = {"type": "tool_result", "tool_use_id": tc_id, "content": output_text}
                 self._merge_anthropic_block(
                     messages, "user", "tool_result", block)
                 continue

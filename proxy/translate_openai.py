@@ -19,11 +19,19 @@ class OpenAITranslateMixin:
             role = item.get("role", "")
 
             if item_type == "function_call_output":
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": item.get("call_id", ""),
-                    "content": self._extract_text(item.get("output", "")),
-                })
+                output_content = item.get("output", "")
+                blocks = self._extract_content_blocks(output_content)
+                has_image = any(b.get("type") == "image" for b in blocks)
+                if has_image:
+                    content_parts = []
+                    for b in blocks:
+                        if b.get("type") == "image":
+                            content_parts.append({"type": "image_url", "image_url": {"url": b.get("image_url", "")}})
+                        else:
+                            content_parts.append({"type": "text", "text": b.get("text", "")})
+                    messages.append({"role": "tool", "tool_call_id": item.get("call_id", ""), "content": content_parts})
+                else:
+                    messages.append({"role": "tool", "tool_call_id": item.get("call_id", ""), "content": self._extract_text(output_content)})
                 continue
 
             if item_type == "function_call":
