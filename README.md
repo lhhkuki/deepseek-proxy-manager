@@ -15,12 +15,11 @@
 
 ## 下载安装
 
-1. 下载 `AI Proxy Manager Setup 2.3.1.exe`
+1. 下载 `AI Proxy Manager Setup 2.4.0.exe`
 2. 双击安装，选择安装路径
 3. 安装完成后打开桌面快捷方式
-4. **前提**：你的电脑必须安装 [Python 3.10+](https://www.python.org/downloads/)（含 pip）
 
-首次启动会自动安装 Python 依赖，稍等几秒即可。
+**不需要装 Python**，所有依赖已打包在内。
 
 ---
 
