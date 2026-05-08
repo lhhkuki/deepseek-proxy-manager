@@ -1,7 +1,7 @@
 {
     "name": "frontend",
     "private": true,
-    "version": "2.3.1",
+    "version": "2.4.0",
     "type": "module",
     "main": "electron/main.cjs",
     "scripts": {
@@ -35,16 +35,8 @@
         },
         "extraFiles": [
             {
-                "from": "../api_server.py",
-                "to": "api_server.py"
-            },
-            {
-                "from": "../proxy",
-                "to": "proxy"
-            },
-            {
-                "from": "../requirements.txt",
-                "to": "requirements.txt"
+                "from": "../dist/proxy-backend.exe",
+                "to": "proxy-backend.exe"
             }
         ]
     },
