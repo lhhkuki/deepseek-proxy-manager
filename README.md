@@ -28,17 +28,17 @@
 打开前端界面（安装后自动弹出），在左侧"模型"标签页：
 
 1. 点击 **添加模型**，填写：
-   - 模型 ID（随便写，如 `deepseek-v4`）
-   - 显示名称
+   - 模型 ID（必须填供应商支持的模型名，见下表）
+   - 显示名称（随意）
    - API 地址（见下表）
    - API Key（去对应平台申请）
 2. 点击保存，然后点击该模型的 **启用** 按钮
 
-| 供应商 | API 地址 | 获取 Key |
-|--------|----------|----------|
-| DeepSeek | `https://api.deepseek.com` | [platform.deepseek.com](https://platform.deepseek.com) |
-| Kimi Code | `https://api.kimi.com/coding/v1` | [www.kimi.com/code](https://www.kimi.com/code) |
-| Moonshot | `https://api.moonshot.cn/v1` | [platform.moonshot.cn](https://platform.moonshot.cn) |
+| 供应商 | 模型 ID | API 地址 | 获取 Key |
+|--------|---------|----------|----------|
+| DeepSeek | `deepseek-chat` 或 `deepseek-v4-pro` | `https://api.deepseek.com` | [platform.deepseek.com](https://platform.deepseek.com) |
+| Kimi Code | `kimi-k2.6` | `https://api.kimi.com/coding/v1` | [www.kimi.com/code](https://www.kimi.com/code) |
+| Moonshot | `moonshot-v1-128k` | `https://api.moonshot.cn/v1` | [platform.moonshot.cn](https://platform.moonshot.cn) |
 
 ---
 
@@ -58,7 +58,7 @@ requires_openai_auth = true
 base_url = "http://127.0.0.1:15800/v1"
 ```
 
-> `model` 的值必须和前端"模型 ID"字段**完全一致**，否则不会使用该模型。
+> `model` 的值必须和前端"模型 ID"字段**完全一致**（也就是上表中的模型 ID），否则代理不会匹配到该模型。
 
 保存后**重新打开 Codex**。
 
