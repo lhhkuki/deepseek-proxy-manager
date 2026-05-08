@@ -21,17 +21,26 @@ function findBackendScript() {
 function installDeps(scriptDir, callback) {
   const reqPath = path.join(scriptDir, 'requirements.txt')
   if (!fs.existsSync(reqPath)) {
-    console.log('No requirements.txt found, skipping pip install')
     callback()
     return
   }
-  console.log(`Installing Python dependencies from ${reqPath}...`)
-  const pip = spawn('pip', ['install', '-r', reqPath, '-q'], {
-    stdio: 'pipe', windowsHide: true,
-  })
-  pip.on('close', (code) => {
-    console.log(`pip install exited with code ${code}`)
-    callback()
+  // Try pip3 first, then python -m pip, then pip
+  const pipCmds = [
+    {cmd: 'pip', args: ['install', '-r', reqPath, '-q']},
+    {cmd: 'pip3', args: ['install', '-r', reqPath, '-q']},
+    {cmd: 'python', args: ['-m', 'pip', 'install', '-r', reqPath, '-q']},
+  ]
+  function tryPip(idx) {
+    if (idx >= pipCmds.length) { callback(); return }
+    const c = pipCmds[idx]
+    const child = spawn(c.cmd, c.args, {stdio: 'pipe', windowsHide: true})
+    child.on('close', (code) => {
+      if (code === 0) callback()
+      else tryPip(idx + 1)
+    })
+    child.on('error', () => tryPip(idx + 1))
+  }
+  tryPip(0)
   })
   pip.stderr.on('data', (d) => { console.error(`[pip] ${d}`) })
 }
@@ -46,10 +55,21 @@ function startPythonBackend() {
 
   // Auto-install Python dependencies, then start backend
   installDeps(scriptDir, () => {
-    console.log(`Starting backend: ${scriptPath}`)
-    pythonProcess = spawn('python', [scriptPath], {
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+    console.log(`Starting backend: ${pythonCmd} ${scriptPath}`)
+    pythonProcess = spawn(pythonCmd, [scriptPath], {
       stdio: 'pipe',
       windowsHide: true,
+    })
+    pythonProcess.on('error', (err) => {
+      // Try python3 if python failed
+      if (pythonCmd === 'python') {
+        console.log('python failed, trying python3')
+        pythonProcess = spawn('python3', [scriptPath], {
+          stdio: 'pipe', windowsHide: true,
+        })
+        pythonProcess.on('error', () => {})
+      }
     })
     pythonProcess.on('error', (err) => {
       console.error(`Failed to start Python: ${err.message}`)
