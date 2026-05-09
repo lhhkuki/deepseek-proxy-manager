@@ -13,6 +13,12 @@
 
 ---
 
+## 交流群
+
+<img src="wechat-group.jpg" width="200" alt="微信交流群">
+
+---
+
 ## 下载安装
 
 1. 下载 `AI Proxy Manager Setup 2.4.0.exe`
