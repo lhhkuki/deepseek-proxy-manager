@@ -59,11 +59,19 @@ name = "custom"
 wire_api = "responses"
 requires_openai_auth = true
 base_url = "http://127.0.0.1:15800/v1"
+
+[windows]
+sandbox = "elevated"
+
+[features]
+memories = true
+
+[memories]
+generate_memories = true
+use_memories = true
 ```
 
-> `model` 的值必须和你在前端启用的模型 ID 一致。上面是 DeepSeek 的例子，如果用 Kimi 就改成 `kimi-k2.6`。
-
-> 如果你的 Codex 启动报沙盒错误，在文件末尾加上 `[windows]` 和 `sandbox = "unelevated"`。
+> 只需改 `model = "deepseek-v4-pro"` 这一行，换成你在前端启用的模型 ID（如 `kimi-k2.6`、`deepseek-chat`）。
 
 保存后**重新打开 Codex**。
 
