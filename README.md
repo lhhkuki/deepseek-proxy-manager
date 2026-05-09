@@ -44,11 +44,14 @@
 
 ## 修改 Codex 配置
 
-编辑 `C:\Users\你的用户名\.codex\config.toml`，添加以下内容：
+编辑 `C:\Users\你的用户名\.codex\config.toml`，用以下内容**完全覆盖**：
 
 ```toml
 model_provider = "custom"
-model = "你填的模型ID"
+model = "deepseek-v4-pro"
+
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
 
 [model_providers]
 [model_providers.custom]
@@ -58,7 +61,9 @@ requires_openai_auth = true
 base_url = "http://127.0.0.1:15800/v1"
 ```
 
-> `model` 的值必须和前端"模型 ID"字段**完全一致**（也就是上表中的模型 ID），否则代理不会匹配到该模型。
+> `model` 的值必须和你在前端启用的模型 ID 一致。上面是 DeepSeek 的例子，如果用 Kimi 就改成 `kimi-k2.6`。
+
+> 如果你的 Codex 启动报沙盒错误，在文件末尾加上 `[windows]` 和 `sandbox = "unelevated"`。
 
 保存后**重新打开 Codex**。
 
