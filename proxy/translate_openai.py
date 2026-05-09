@@ -396,8 +396,19 @@ class OpenAITranslateMixin:
         finally:
             if full_reasoning:
                 cache_reasoning(chat_req, full_reasoning)
-            # Ensure stream always gets completion — even if [DONE] was missed
-            if started:
+            # Ensure stream always gets completion
+            if not started and not text_closed:
+                # No data was read — return error as SSE
+                self._sse("response.completed", {
+                    "type": "response.completed",
+                    "response": {
+                        "id": rid, "object": "response",
+                        "model": chat_req["model"],
+                        "status": "failed", "output": [],
+                        "usage": usage_info,
+                    }
+                })
+            elif started:
                 if not text_closed and full_text:
                     close_text_msg()
                 for tc in tcs.values():
@@ -430,11 +441,11 @@ class OpenAITranslateMixin:
                         "usage": usage_info,
                     }
                 })
-                try:
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
-                except Exception:
-                    pass
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except Exception:
+                pass
             total_out = usage_info.get("output_tokens", 0)
             text_len = len(full_text)
             try:
