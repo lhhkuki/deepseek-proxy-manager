@@ -69,6 +69,9 @@ memories = true
 [memories]
 generate_memories = true
 use_memories = true
+
+[plugins."browser-use@openai-bundled"]
+enabled = true
 ```
 
 > 只需改 `model = "deepseek-v4-pro"` 这一行，换成你在前端启用的模型 ID（如 `kimi-k2.6`、`deepseek-chat`）。
