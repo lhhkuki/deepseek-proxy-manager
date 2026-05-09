@@ -391,12 +391,26 @@ class AnthropicTranslateMixin:
             if completed:
                 return
             completed = True
-            if not started:
-                return
             usage_info.setdefault("input_tokens", 0)
             usage_info.setdefault("output_tokens", 0)
             usage_info["total_tokens"] = (
                 usage_info["input_tokens"] + usage_info["output_tokens"])
+            if not started:
+                self._sse("response.completed", {
+                    "type": "response.completed",
+                    "response": {
+                        "id": rid, "object": "response",
+                        "model": anthro_req["model"],
+                        "status": "failed", "output": [],
+                        "usage": usage_info,
+                    }
+                })
+                try:
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
+                return
             if full_text:
                 self._sse("response.output_text.done", {
                     "type": "response.output_text.done",
