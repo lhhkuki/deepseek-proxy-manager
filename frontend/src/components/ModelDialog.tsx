@@ -138,14 +138,30 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
             {/* Upstream format */}
             <div>
               <label className="block text-sm text-[#6e6e73] mb-1.5">上游协议</label>
-              <select
-                value={upstreamFormat}
-                onChange={(e) => setUpstreamFormat(e.target.value)}
-                className="w-full px-4 py-2.5 bg-[#f8f8f8] border border-[#e5e5e8] rounded-lg text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#4A90D9]/30 focus:border-[#4A90D9] transition-all"
-              >
-                <option value="openai">OpenAI (DeepSeek / Moonshot / 通用)</option>
-                <option value="anthropic">Anthropic (Kimi Code / Claude 兼容)</option>
-              </select>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setUpstreamFormat('openai')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                    upstreamFormat === 'openai'
+                      ? 'bg-[#4A90D9] text-white shadow-sm'
+                      : 'bg-[#f0f0f2] text-[#6e6e73] hover:bg-[#e5e5e8]'
+                  }`}
+                >
+                  OpenAI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUpstreamFormat('anthropic')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                    upstreamFormat === 'anthropic'
+                      ? 'bg-[#4A90D9] text-white shadow-sm'
+                      : 'bg-[#f0f0f2] text-[#6e6e73] hover:bg-[#e5e5e8]'
+                  }`}
+                >
+                  Anthropic
+                </button>
+              </div>
             </div>
 
             {/* 开启推理 */}
