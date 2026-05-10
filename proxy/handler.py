@@ -88,7 +88,15 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             self.send_response(404)
             self.end_headers()
 
-    def _is_anthropic_upstream(self, base_url):
+    def _is_anthropic_upstream(self, base_url, model_cfg=None):
+        # Check model's upstream_format field first
+        if model_cfg:
+            fmt = model_cfg.get("upstream_format", "auto")
+            if fmt == "anthropic":
+                return True
+            if fmt == "openai":
+                return False
+        # Auto-detect: kimi.com/coding uses Anthropic format
         return "kimi.com/coding" in base_url
 
     def _handle_responses(self):
@@ -109,7 +117,9 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
 
             LOG_QUEUE.put(f"REQ model={model_cfg.get('id','?')} stream={stream} base={base_url[:50]}")
 
-            if self._is_anthropic_upstream(base_url):
+            is_anthropic = self._is_anthropic_upstream(base_url, model_cfg)
+
+            if is_anthropic:
                 req_body = self._to_anthropic(body)
                 endpoint = "/messages"
             else:
@@ -117,13 +127,13 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 endpoint = "/chat/completions"
 
             if stream:
-                if self._is_anthropic_upstream(base_url):
+                if is_anthropic:
                     self._stream_anthropic(req_body, base_url, api_key)
                 else:
                     self._stream(req_body, base_url, api_key)
             else:
                 data = self._fetch(endpoint, req_body, base_url, api_key)
-                if self._is_anthropic_upstream(base_url):
+                if is_anthropic:
                     self._json(200, self._from_anthropic_resp(data))
                 else:
                     self._json(200, self._to_resp(data, req_body))

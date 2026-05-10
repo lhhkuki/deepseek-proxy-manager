@@ -15,6 +15,7 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
   const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com')
   const [apiKey, setApiKey] = useState('')
   const [reasoning, setReasoning] = useState(false)
+  const [upstreamFormat, setUpstreamFormat] = useState('openai')
   const [showKey, setShowKey] = useState(false)
 
   useEffect(() => {
@@ -24,12 +25,14 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
       setBaseUrl(model.base_url)
       setApiKey(model.api_key)
       setReasoning(model.reasoning || false)
+      setUpstreamFormat(model.upstream_format || 'openai')
     } else {
       setId('')
       setName('')
       setBaseUrl('https://api.deepseek.com')
       setApiKey('')
       setReasoning(false)
+      setUpstreamFormat('openai')
     }
   }, [model])
 
@@ -42,6 +45,7 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
       api_key: apiKey.trim(),
       enabled: model?.enabled || false,
       reasoning,
+      upstream_format: upstreamFormat,
     })
   }
 
@@ -129,6 +133,19 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
                   {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+            </div>
+
+            {/* Upstream format */}
+            <div>
+              <label className="block text-sm text-[#6e6e73] mb-1.5">上游协议</label>
+              <select
+                value={upstreamFormat}
+                onChange={(e) => setUpstreamFormat(e.target.value)}
+                className="w-full px-4 py-2.5 bg-[#f8f8f8] border border-[#e5e5e8] rounded-lg text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#4A90D9]/30 focus:border-[#4A90D9] transition-all"
+              >
+                <option value="openai">OpenAI (DeepSeek / Moonshot / 通用)</option>
+                <option value="anthropic">Anthropic (Kimi Code / Claude 兼容)</option>
+              </select>
             </div>
 
             {/* 开启推理 */}

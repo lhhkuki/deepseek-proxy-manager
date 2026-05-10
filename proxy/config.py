@@ -82,6 +82,7 @@ DEFAULT_CONFIG = {
             "base_url": "https://api.deepseek.com",
             "api_key": "",
             "reasoning": False,
+            "upstream_format": "openai",
         },
         {
             "id": "deepseek-chat",
@@ -90,6 +91,7 @@ DEFAULT_CONFIG = {
             "base_url": "https://api.deepseek.com",
             "api_key": "",
             "reasoning": False,
+            "upstream_format": "openai",
         },
     ],
 }

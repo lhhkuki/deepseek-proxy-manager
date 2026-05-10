@@ -5,6 +5,7 @@
   base_url: string;
   api_key: string;
   reasoning?: boolean;
+  upstream_format?: string;
 }
 
 export interface Config {
