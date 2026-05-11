@@ -116,15 +116,10 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             self.end_headers()
 
     def _is_anthropic_upstream(self, base_url, model_cfg=None):
-        # Check model's upstream_format field first
         if model_cfg:
-            fmt = model_cfg.get("upstream_format", "auto")
-            if fmt == "anthropic":
-                return True
-            if fmt == "openai":
-                return False
-        # Auto-detect: kimi.com/coding uses Anthropic format
-        return "kimi.com/coding" in base_url
+            fmt = model_cfg.get("upstream_format", "openai")
+            return fmt == "anthropic"
+        return False
 
     def _handle_responses(self):
         try:
