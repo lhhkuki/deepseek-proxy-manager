@@ -149,7 +149,6 @@ class OpenAITranslateMixin:
         for tool in tools:
             t = tool.get("type", "")
             if t == "web_search":
-                # Translate to function format so model can call it
                 result.append({
                     "type": "function",
                     "function": {
@@ -165,8 +164,7 @@ class OpenAITranslateMixin:
                     }
                 })
                 continue
-            if t not in ("", "function", "custom", "namespace"):
-                continue
+            # Pass through all tool types — let the model decide what it can use
             if "function" in tool:
                 result.append(tool)
             elif "name" in tool:

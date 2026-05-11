@@ -297,8 +297,6 @@ class AnthropicTranslateMixin:
                     }
                 })
                 continue
-            if t not in ("", "function", "custom", "namespace"):
-                continue
             if "function" in tool:
                 fn = tool["function"]
                 result.append({

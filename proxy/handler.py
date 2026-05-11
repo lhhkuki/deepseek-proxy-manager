@@ -61,6 +61,14 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 "id": "user-proxy", "object": "user",
                 "name": "Proxy User", "email": "proxy@local",
                 "role": "owner", "added": 1700000000,
+                "has_payg": True,
+                "orgs": {"object": "list", "data": [{
+                    "id": "org-proxy", "object": "organization",
+                    "name": "Proxy Org", "role": "owner",
+                    "is_default": True,
+                    "has_payg": True,
+                    "title": "personal",
+                }]}
             })
         elif self.path == "/v1/organizations":
             self._json(200, {
@@ -68,7 +76,26 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                     "id": "org-proxy", "object": "organization",
                     "name": "Proxy Org", "role": "owner",
                     "is_default": True,
+                    "has_payg": True,
+                    "title": "personal",
+                    "personal": True,
+                    "groups": [],
                 }]
+            })
+        elif self.path in ("/v1/billing/subscription", "/v1/dashboard/billing/subscription"):
+            self._json(200, {
+                "object": "billing_subscription",
+                "has_payment_method": True,
+                "soft_limit": 500000,
+                "hard_limit": 1000000,
+                "account_name": "Proxy Org",
+                "access_until": 2000000000,
+            })
+        elif self.path in ("/v1/usage", "/v1/dashboard/usage"):
+            self._json(200, {
+                "object": "usage",
+                "total_usage": 0,
+                "has_payg": True,
             })
         elif self.path in ("/", "/health"):
             self._json(200, {"status": "ok"})
