@@ -148,6 +148,23 @@ class OpenAITranslateMixin:
         result = []
         for tool in tools:
             t = tool.get("type", "")
+            if t == "web_search":
+                # Translate to function format so model can call it
+                result.append({
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for current information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Search query"}
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                })
+                continue
             if t not in ("", "function", "custom", "namespace"):
                 continue
             if "function" in tool:
@@ -208,13 +225,31 @@ class OpenAITranslateMixin:
                              "annotations": []}],
             })
         for tc in tcs:
+            tc_name = tc.get("function", {}).get("name", "")
             output_items.append({
                 "id": tc.get("id", self._gid("fc_")),
                 "type": "function_call",
                 "call_id": tc.get("id", ""),
-                "name": tc.get("function", {}).get("name", ""),
+                "name": tc_name,
                 "arguments": tc.get("function", {}).get("arguments", ""),
             })
+            # Auto-execute web_search and include results inline
+            if tc_name == "web_search":
+                try:
+                    args = tc.get("function", {}).get("arguments", "{}")
+                    if isinstance(args, str):
+                        args = json_mod.loads(args)
+                    query = args.get("query", "")
+                    from .web_search import search
+                    search_result = search(query)
+                    output_items.append({
+                        "id": self._gid("fc_output_"),
+                        "type": "function_call_output",
+                        "call_id": tc.get("id", ""),
+                        "output": search_result,
+                    })
+                except Exception:
+                    pass
 
         usage = chat_resp.get("usage", {})
         return {

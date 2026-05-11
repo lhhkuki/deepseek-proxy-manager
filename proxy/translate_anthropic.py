@@ -284,6 +284,19 @@ class AnthropicTranslateMixin:
         result = []
         for tool in tools:
             t = tool.get("type", "")
+            if t == "web_search":
+                result.append({
+                    "name": "web_search",
+                    "description": "Search the web for current information",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"}
+                        },
+                        "required": ["query"]
+                    }
+                })
+                continue
             if t not in ("", "function", "custom", "namespace"):
                 continue
             if "function" in tool:
@@ -327,14 +340,27 @@ class AnthropicTranslateMixin:
             elif bt == "thinking":
                 reasoning_text += block.get("thinking", "")
             elif bt == "tool_use":
+                tc_name = block.get("name", "")
                 output.append({
                     "id": self._gid("fc_"),
                     "type": "function_call",
                     "call_id": block.get("id", ""),
-                    "name": block.get("name", ""),
+                    "name": tc_name,
                     "arguments": json_mod.dumps(
                         block.get("input", {}), ensure_ascii=False),
                 })
+                if tc_name == "web_search":
+                    try:
+                        query = block.get("input", {}).get("query", "")
+                        from .web_search import search
+                        output.append({
+                            "id": self._gid("fc_output_"),
+                            "type": "function_call_output",
+                            "call_id": block.get("id", ""),
+                            "output": search(query),
+                        })
+                    except Exception:
+                        pass
         if reasoning_text:
             output.append({
                 "id": self._gid("reasoning_"),
