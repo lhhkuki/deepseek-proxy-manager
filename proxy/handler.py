@@ -53,7 +53,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 if m.get("enabled", True):
                     models.append({
                         "id": m["id"], "object": "model",
-                        "created": 1700000000, "owned_by": "custom"
+                        "created": 1700000000, "owned_by": "openai"
                     })
             self._json(200, {"object": "list", "data": models})
         elif self.path == "/v1/me":
