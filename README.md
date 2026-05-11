@@ -83,7 +83,7 @@ model_auto_compact_token_limit = 900000
 [model_providers.custom]
 name = "custom"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
 base_url = "http://127.0.0.1:15800/v1"
 
 [windows]
