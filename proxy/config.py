@@ -15,35 +15,60 @@ CONFIG_PATH = os.path.join(HOME, ".codex", "proxy_config.json")
 PID_FILE = os.path.join(HOME, ".codex", "proxy.pid")
 
 
-def _get_machine_key():
-    import platform
-    parts = [
-        platform.node(),
-        os.environ.get("COMPUTERNAME", ""),
-        os.environ.get("USERDOMAIN", ""),
-        os.path.expanduser("~"),
-    ]
-    key_material = "|".join(parts).encode("utf-8", errors="replace")
-    return hashlib.sha256(key_material).digest()
+def _get_fernet():
+    """Get or create a Fernet encryption key bound to this machine."""
+    from cryptography.fernet import Fernet
+    key_path = os.path.join(HOME, ".codex", ".fernet_key")
+    if os.path.exists(key_path):
+        with open(key_path, "rb") as f:
+            key = f.read()
+    else:
+        import platform
+        material = "|".join([
+            platform.node(), os.environ.get("COMPUTERNAME", ""),
+            os.environ.get("USERDOMAIN", ""), os.path.expanduser("~"),
+        ]).encode("utf-8", errors="replace")
+        key = base64.urlsafe_b64encode(
+            hashlib.sha256(material).digest())
+        os.makedirs(os.path.dirname(key_path), exist_ok=True)
+        with open(key_path, "wb") as f:
+            f.write(key)
+    return Fernet(key)
 
 
 def _encrypt_api_key(plain_key):
     if not plain_key:
         return ""
-    key = _get_machine_key()
-    data = plain_key.encode("utf-8")
-    encrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
-    return base64.b64encode(encrypted).decode("ascii")
+    try:
+        f = _get_fernet()
+        return f.encrypt(plain_key.encode("utf-8")).decode("ascii")
+    except Exception:
+        return ""
 
 
 def _decrypt_api_key(cipher_text):
     if not cipher_text:
         return ""
+    # Try Fernet first
     try:
-        key = _get_machine_key()
+        f = _get_fernet()
+        return f.decrypt(cipher_text.encode("ascii")).decode("utf-8")
+    except Exception:
+        pass
+    # Fallback: old XOR encrypted keys
+    try:
+        import platform
+        material = "|".join([
+            platform.node(), os.environ.get("COMPUTERNAME", ""),
+            os.environ.get("USERDOMAIN", ""), os.path.expanduser("~"),
+        ]).encode("utf-8", errors="replace")
+        key = hashlib.sha256(material).digest()
         encrypted = base64.b64decode(cipher_text.encode("ascii"))
         data = bytes(b ^ key[i % len(key)] for i, b in enumerate(encrypted))
-        return data.decode("utf-8")
+        result = data.decode("utf-8")
+        # Re-encrypt with Fernet
+        save_api_key(result)
+        return result
     except Exception:
         return ""
 
@@ -113,11 +138,19 @@ def _migrate_old_config(cfg):
     base_url = cfg.pop("deepseek_base", "https://api.deepseek.com")
     api_key = cfg.pop("api_key", "")
     models = cfg.get("models", [])
-    for m in models:
-        if not m.get("base_url"):
-            m["base_url"] = base_url
-        if not m.get("api_key") and api_key:
-            m["api_key"] = api_key
+    if not models:
+        models = [{
+            "id": "deepseek-chat", "name": "DeepSeek V4 Flash",
+            "enabled": True, "base_url": base_url,
+            "api_key": api_key, "reasoning": False,
+            "upstream_format": "openai",
+        }]
+    else:
+        for m in models:
+            if not m.get("base_url"):
+                m["base_url"] = base_url
+            if not m.get("api_key") and api_key:
+                m["api_key"] = api_key
     cfg["models"] = models
     return cfg
 

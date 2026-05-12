@@ -52,7 +52,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             cfg = load_config()
             models = []
             for m in cfg.get("models", []):
-                if m.get("enabled", True):
+                if m.get("enabled", False):
                     models.append({
                         "id": m["id"], "object": "model",
                         "created": 1700000000, "owned_by": "openai"
