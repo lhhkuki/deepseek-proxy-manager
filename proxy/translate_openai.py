@@ -302,7 +302,21 @@ class OpenAITranslateMixin:
         try:
             resp = self._do_fetch("/chat/completions", chat_req, base_url, api_key)
         except Exception:
-            self._safe_json(502, {"error": "Upstream request failed"})
+            self._sse("response.completed", {
+                "type": "response.completed",
+                "response": {
+                    "id": rid, "object": "response",
+                    "model": chat_req["model"],
+                    "status": "failed",
+                    "output": [],
+                    "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                }
+            })
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except Exception:
+                pass
             return
 
         try:
