@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { X, Eye, EyeOff, Brain } from 'lucide-react'
 import type { Model } from '../types'
 
@@ -50,22 +50,21 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
   }
 
   return (
-    <AnimatePresence>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+      onClick={onClose}
+    >
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
-        onClick={onClose}
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
       >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-          className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
-        >
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-[#f0f0f2]">
             <h3 className="text-lg font-bold text-[#1d1d1f]">
@@ -200,7 +199,6 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
             </motion.button>
           </div>
         </motion.div>
-      </motion.div>
-    </AnimatePresence>
+    </motion.div>
   )
 }

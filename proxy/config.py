@@ -201,22 +201,32 @@ def get_active_model_config():
 
 def is_already_running(port):
     import socket
+    import sys
     if os.path.exists(PID_FILE):
         try:
             with open(PID_FILE, encoding="utf-8") as f:
                 pid = int(f.read().strip())
-            import ctypes
-            kernel = ctypes.windll.kernel32
-            handle = kernel.OpenProcess(0x0400, False, pid)
-            if handle:
-                kernel.CloseHandle(handle)
-                try:
-                    s = socket.create_connection(("127.0.0.1", port), timeout=0.5)
-                    s.close()
-                    return True
-                except (ConnectionRefusedError, OSError):
-                    os.remove(PID_FILE)
-                    return False
+            if sys.platform == "win32":
+                import ctypes
+                kernel = ctypes.windll.kernel32
+                handle = kernel.OpenProcess(0x0400, False, pid)
+                if handle:
+                    kernel.CloseHandle(handle)
+                    try:
+                        s = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+                        s.close()
+                        return True
+                    except (ConnectionRefusedError, OSError):
+                        os.remove(PID_FILE)
+                        return False
+            # Non-Windows: skip process check, just test port
+            try:
+                s = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+                s.close()
+                return True
+            except (ConnectionRefusedError, OSError):
+                os.remove(PID_FILE)
+                return False
         except (ValueError, OSError, ImportError):
             pass
     try:

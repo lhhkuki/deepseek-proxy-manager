@@ -7,8 +7,10 @@ async function fetchWithRetry(url: string, options?: RequestInit, retries = 3): 
     try {
       const res = await fetch(url, { ...options, mode: 'cors' })
       if (res.ok) return res
+      // 4xx: client error, don't retry; 5xx: server error, retry
+      if (res.status < 500) return res
+      throw new Error(`HTTP ${res.status}`)
     } catch (e) {
-      console.warn(`Fetch attempt ${i + 1} failed:`, e)
       if (i === retries - 1) throw e
       await new Promise(r => setTimeout(r, 500 * (i + 1)))
     }

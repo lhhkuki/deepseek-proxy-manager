@@ -15,6 +15,7 @@ from .translate_openai import OpenAITranslateMixin
 from .translate_anthropic import AnthropicTranslateMixin
 
 MAX_BODY_SIZE = 10 * 1024 * 1024
+MAX_RESPONSE_SIZE = 50 * 1024 * 1024
 
 CORS_HEADERS = [
     ("Access-Control-Allow-Origin", "*"),
@@ -254,7 +255,13 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         cl = int(self.headers.get("Content-Length", 0))
         if cl > MAX_BODY_SIZE:
             raise ValueError("Request body too large: {0} bytes".format(cl))
-        return json.loads(self.rfile.read(cl)) if cl > 0 else {}
+        if cl <= 0:
+            return {}
+        try:
+            return json.loads(self.rfile.read(cl))
+        except json.JSONDecodeError as e:
+            LOG_QUEUE.put_nowait(f"JSON parse error: {e}")
+            raise ValueError("Invalid JSON in request body")
 
     def _json(self, status, data):
         self.send_response(status)
@@ -318,7 +325,10 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
     def _fetch(self, path, data, base_url, api_key, is_anthropic=False):
         resp = self._do_fetch(path, data, base_url, api_key, is_anthropic)
         try:
-            return json.loads(resp.read())
+            raw = resp.read(MAX_RESPONSE_SIZE + 1)
+            if len(raw) > MAX_RESPONSE_SIZE:
+                raise ValueError("Upstream response too large: {0}+ bytes".format(MAX_RESPONSE_SIZE))
+            return json.loads(raw)
         finally:
             resp.close()
 

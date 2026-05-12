@@ -3,7 +3,9 @@
 import json
 import os
 import sys
+import queue
 import threading
+import itertools
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -26,6 +28,7 @@ CORS(app)
 proxy_server = None
 _logs_history = []
 _logs_lock = threading.Lock()
+_log_counter = itertools.count()
 
 
 def set_proxy_instance(proxy):
@@ -37,12 +40,15 @@ def set_proxy_instance(proxy):
 def _drain_log_queue():
     """Drain new messages from LOG_QUEUE into persistent history."""
     global _logs_history
-    while not LOG_QUEUE.empty():
+    while True:
         try:
             msg = LOG_QUEUE.get_nowait()
+        except queue.Empty:
+            break
+        try:
             with _logs_lock:
                 _logs_history.append({
-                    "id": str(datetime.now().timestamp()),
+                    "id": str(next(_log_counter)),
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
                     "message": msg,
                 })

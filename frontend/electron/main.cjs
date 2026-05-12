@@ -73,16 +73,46 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow.show())
 }
 
-app.whenReady().then(() => {
+function waitForBackend(retries = 30) {
+  const http = require('http')
+  return new Promise((resolve) => {
+    function check(n) {
+      http.get('http://127.0.0.1:15801/api/status', (res) => {
+        res.resume()
+        resolve()
+      }).on('error', () => {
+        if (n > 0) setTimeout(() => check(n - 1), 400)
+        else {
+          console.warn('Backend not ready, showing window anyway')
+          resolve()
+        }
+      })
+    }
+    check(retries)
+  })
+}
+
+function stopBackend() {
+  if (!backendProcess || backendProcess.killed) return
+  backendProcess.kill('SIGTERM')
+  setTimeout(() => {
+    if (backendProcess && !backendProcess.killed) {
+      backendProcess.kill('SIGKILL')
+    }
+  }, 3000)
+}
+
+app.whenReady().then(async () => {
   startBackend()
-  setTimeout(createWindow, 4000)
+  await waitForBackend()
+  createWindow()
 })
 
 app.on('window-all-closed', () => {
-  if (backendProcess) backendProcess.kill()
+  stopBackend()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
-  if (backendProcess) backendProcess.kill()
+  stopBackend()
 })

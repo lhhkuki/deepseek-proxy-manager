@@ -23,7 +23,7 @@ function getAvatarColor(id: string): string {
 export default function ModelCard({ model, index, onToggle, onDelete, onEdit }: ModelCardProps) {
   const enabled = model.enabled;
   const avatarColor = getAvatarColor(model.id);
-  const firstLetter = (model.name || model.id)[0].toUpperCase();
+  const firstLetter = (model.name || model.id || '?')[0].toUpperCase();
 
   return (
     <motion.div

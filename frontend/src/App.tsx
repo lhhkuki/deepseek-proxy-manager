@@ -124,11 +124,12 @@ function App() {
     try {
       if (isRunning) {
         await api.stopProxy()
-        setIsRunning(false)
       } else {
         await api.startProxy()
-        setIsRunning(true)
       }
+      // Poll actual status from server instead of optimistic update
+      const status = await api.getStatus()
+      setIsRunning(status.running)
     } catch (e) {
       console.error('Failed to toggle proxy:', e)
       alert('操作失败: ' + (e instanceof Error ? e.message : String(e)))
