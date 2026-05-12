@@ -57,12 +57,30 @@ def get_config():
     return jsonify(load_config())
 
 
+ALLOWED_CONFIG_KEYS = {"port", "models"}
+ALLOWED_MODEL_KEYS = {"id", "name", "enabled", "base_url", "api_key", "reasoning", "upstream_format"}
+
+
+def _sanitize_config(cfg):
+    """Strip unknown fields from config to prevent injection."""
+    clean = {}
+    for k in ALLOWED_CONFIG_KEYS:
+        if k in cfg:
+            clean[k] = cfg[k]
+    if "models" in clean and isinstance(clean["models"], list):
+        clean["models"] = [
+            {mk: mv for mk, mv in m.items() if mk in ALLOWED_MODEL_KEYS}
+            for m in clean["models"] if isinstance(m, dict)
+        ]
+    return clean
+
+
 @app.route('/api/config', methods=['POST'])
 def update_config():
     cfg = request.json
     if not isinstance(cfg, dict):
         return jsonify({"status": "error", "message": "Invalid config format"}), 400
-    save_config(cfg)
+    save_config(_sanitize_config(cfg))
     return jsonify({"status": "ok"})
 
 

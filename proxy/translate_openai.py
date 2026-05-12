@@ -124,7 +124,7 @@ class OpenAITranslateMixin:
                         and not m.get("reasoning_content")):
                     m["reasoning_content"] = ""
                     fixed += 1
-            LOG_QUEUE.put(f"Thinking enabled, fixed {fixed} missing reasoning_content")
+            LOG_QUEUE.put_nowait(f"Thinking enabled, fixed {fixed} missing reasoning_content")
             chat["thinking"] = {"type": "enabled", "budget_tokens": 8192}
         for k in ("temperature", "top_p", "frequency_penalty",
                   "presence_penalty"):

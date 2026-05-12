@@ -33,11 +33,13 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
     RETRY_DELAY = 2
 
     def _log_detail(self, msg):
-        LOG_QUEUE.put(msg)
+        LOG_QUEUE.put_nowait(msg)
 
     def log_request(self, code="-", size="-"):
-        msg = "{0} {1} -> {2}".format(self.command, self.path, code)
-        LOG_QUEUE.put(msg)
+        cmd = "".join(c for c in self.command if c.isalpha())[:10]
+        path = self.path[:200].replace("\n", "").replace("\r", "")
+        msg = "{0} {1} -> {2}".format(cmd, path, str(code)[:10])
+        LOG_QUEUE.put_nowait(msg)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -137,7 +139,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 self._safe_json(401, {"error": "API Key not configured for this model. Please add it in the proxy settings."})
                 return
 
-            LOG_QUEUE.put(f"REQ model={model_cfg.get('id','?')} stream={stream} base={base_url[:50]}")
+            LOG_QUEUE.put_nowait(f"REQ model={model_cfg.get('id','?')} stream={stream} base={base_url[:50]}")
 
             is_anthropic = self._is_anthropic_upstream(base_url, model_cfg)
 
@@ -165,12 +167,12 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 err = e.read().decode(errors="replace")[:300]
             except Exception:
                 pass
-            LOG_QUEUE.put(f"Upstream {e.code}: {err}")
+            LOG_QUEUE.put_nowait(f"Upstream {e.code}: {err}")
             self._safe_json(e.code, {"error": f"Upstream {e.code}: {err}"})
         except ConnectionAbortedError:
             pass
         except Exception as e:
-            LOG_QUEUE.put(f"FATAL: {e}")
+            LOG_QUEUE.put_nowait(f"FATAL: {e}")
             traceback.print_exc()
             self._safe_json(502, {"error": str(e)})
 
@@ -235,17 +237,17 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         models = cfg.get("models", [])
         enabled_models = [m for m in models if m.get("enabled", True)]
         if not enabled_models:
-            LOG_QUEUE.put("No enabled models, falling back to deepseek-chat")
+            LOG_QUEUE.put_nowait("No enabled models, falling back to deepseek-chat")
             return "deepseek-chat"
         known = {m["id"] for m in enabled_models}
         if model_name in known:
             return model_name
         for m in models:
             if m["id"] == model_name:
-                LOG_QUEUE.put("Model '{0}' disabled, using fallback".format(model_name))
+                LOG_QUEUE.put_nowait("Model '{0}' disabled, using fallback".format(model_name))
                 break
         fallback = enabled_models[0]["id"]
-        LOG_QUEUE.put("Mapped unknown model '{0}' -> '{1}'".format(model_name, fallback))
+        LOG_QUEUE.put_nowait("Mapped unknown model '{0}' -> '{1}'".format(model_name, fallback))
         return fallback
 
     def _read_body(self):
