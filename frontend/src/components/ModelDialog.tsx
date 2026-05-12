@@ -1,5 +1,5 @@
-﻿import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { useState, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { X, Eye, EyeOff, Brain } from 'lucide-react'
 import type { Model } from '../types'
 
@@ -19,21 +19,17 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
   const [showKey, setShowKey] = useState(false)
 
   useEffect(() => {
-    if (model) {
-      setId(model.id)
-      setName(model.name)
-      setBaseUrl(model.base_url)
-      setApiKey(model.api_key)
-      setReasoning(model.reasoning || false)
-      setUpstreamFormat(model.upstream_format || 'openai')
-    } else {
-      setId('')
-      setName('')
-      setBaseUrl('https://api.deepseek.com')
-      setApiKey('')
-      setReasoning(false)
-      setUpstreamFormat('openai')
-    }
+    const values = model
+      ? [model.id, model.name, model.base_url, model.api_key, model.reasoning || false, model.upstream_format || 'openai']
+      : ['', '', 'https://api.deepseek.com', '', false, 'openai']
+    queueMicrotask(() => {
+      setId(values[0] as string)
+      setName(values[1] as string)
+      setBaseUrl(values[2] as string)
+      setApiKey(values[3] as string)
+      setReasoning(values[4] as boolean)
+      setUpstreamFormat(values[5] as string)
+    })
   }, [model])
 
   const handleSave = () => {
@@ -50,155 +46,78 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-        className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[#f0f0f2]">
-            <h3 className="text-lg font-bold text-[#1d1d1f]">
-              {model ? '编辑模型' : '添加模型'}
-            </h3>
-            <motion.button
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-[#6e6e73] hover:bg-[#f5f5f7] transition-colors"
-            >
+    <AnimatePresence>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+        onClick={onClose}>
+        <motion.div initial={{ opacity: 0, scale: 0.97, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.97, y: 12 }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          className="bg-surface rounded-[var(--radius)] border border-[var(--border)] shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+          onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
+            <h3 className="text-[16px] font-semibold text-[var(--text-primary)]">{model ? '编辑模型' : '添加模型'}</h3>
+            <motion.button whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }} onClick={onClose}
+              className="p-1.5 rounded-[var(--radius-xs)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors duration-200">
               <X className="w-5 h-5" />
             </motion.button>
           </div>
-
-          {/* Form */}
           <div className="px-6 py-5 space-y-4">
+            {[
+              { label: '模型 ID', value: id, onChange: setId, placeholder: '例如: deepseek-v4-pro' },
+              { label: '显示名称', value: name, onChange: setName, placeholder: '例如: DeepSeek V4 Pro' },
+              { label: 'API 地址', value: baseUrl, onChange: setBaseUrl, placeholder: 'https://api.deepseek.com' },
+            ].map((field) => (
+              <div key={field.label}>
+                <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5">{field.label}</label>
+                <input type="text" value={field.value} onChange={(e)=>field.onChange(e.target.value)} placeholder={field.placeholder}
+                  className="w-full px-4 py-2.5 bg-[var(--bg-primary)] border border-[var(--border)] rounded-[var(--radius-xs)] text-[var(--text-primary)] text-[14px] outline-none transition-all duration-200 focus:border-accent focus:ring-1 focus:ring-accent/20 focus:bg-surface hover:border-[var(--border-hover)]" />
+              </div>
+            ))}
             <div>
-              <label className="block text-sm text-[#6e6e73] mb-1.5">模型 ID</label>
-              <input
-                type="text"
-                value={id}
-                onChange={(e) => setId(e.target.value)}
-                placeholder="例如: deepseek-v4-pro"
-                className="w-full px-4 py-2.5 bg-[#f8f8f8] border border-[#e5e5e8] rounded-lg text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#4A90D9]/30 focus:border-[#4A90D9] transition-all"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm text-[#6e6e73] mb-1.5">显示名称</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="例如: DeepSeek V4 Pro"
-                className="w-full px-4 py-2.5 bg-[#f8f8f8] border border-[#e5e5e8] rounded-lg text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#4A90D9]/30 focus:border-[#4A90D9] transition-all"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm text-[#6e6e73] mb-1.5">API 地址</label>
-              <input
-                type="text"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.deepseek.com"
-                className="w-full px-4 py-2.5 bg-[#f8f8f8] border border-[#e5e5e8] rounded-lg text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#4A90D9]/30 focus:border-[#4A90D9] transition-all"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm text-[#6e6e73] mb-1.5">API Key</label>
+              <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5">API Key</label>
               <div className="relative">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full px-4 py-2.5 pr-10 bg-[#f8f8f8] border border-[#e5e5e8] rounded-lg text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#4A90D9]/30 focus:border-[#4A90D9] transition-all"
-                />
-                <button
-                  onClick={() => setShowKey(!showKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6e6e73] hover:text-[#1d1d1f] transition-colors"
-                >
+                <input type={showKey ? 'text' : 'password'} value={apiKey} onChange={(e)=>setApiKey(e.target.value)} placeholder="sk-..."
+                  className="w-full px-4 py-2.5 pr-10 bg-[var(--bg-primary)] border border-[var(--border)] rounded-[var(--radius-xs)] text-[var(--text-primary)] text-[14px] outline-none transition-all duration-200 focus:border-accent focus:ring-1 focus:ring-accent/20 focus:bg-surface hover:border-[var(--border-hover)]" />
+                <button onClick={()=>setShowKey(!showKey)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors duration-200">
                   {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
-
-            {/* Upstream format */}
             <div>
-              <label className="block text-sm text-[#6e6e73] mb-1.5">上游协议</label>
+              <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-2">上游协议</label>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setUpstreamFormat('openai')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-                    upstreamFormat === 'openai'
-                      ? 'bg-[#4A90D9] text-white shadow-sm'
-                      : 'bg-[#f0f0f2] text-[#6e6e73] hover:bg-[#e5e5e8]'
-                  }`}
-                >
-                  OpenAI
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setUpstreamFormat('anthropic')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-                    upstreamFormat === 'anthropic'
-                      ? 'bg-[#4A90D9] text-white shadow-sm'
-                      : 'bg-[#f0f0f2] text-[#6e6e73] hover:bg-[#e5e5e8]'
-                  }`}
-                >
-                  Anthropic
-                </button>
+                {['openai','anthropic'].map((fmt) => (
+                  <button key={fmt} type="button" onClick={()=>setUpstreamFormat(fmt)}
+                    className={`flex-1 py-2 px-3 rounded-[var(--radius-xs)] text-[13px] font-semibold transition-all duration-200 ${
+                      upstreamFormat === fmt ? 'bg-accent text-white shadow-sm' : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border)]'
+                    }`}>
+                    {fmt === 'openai' ? 'OpenAI' : 'Anthropic'}
+                  </button>
+                ))}
               </div>
             </div>
-
-            {/* 开启推理 */}
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <div className={`w-10 h-6 rounded-full transition-colors ${reasoning ? 'bg-[#4A90D9]' : 'bg-[#e5e5e8]'}`}>
-                <div className={`w-4 h-4 rounded-full bg-white shadow-sm mt-1 transition-transform ${reasoning ? 'translate-x-5' : 'translate-x-1'}`} />
-              </div>
-              <input
-                type="checkbox"
-                checked={reasoning}
-                onChange={(e) => setReasoning(e.target.checked)}
-                className="hidden"
-              />
-              <Brain className="w-4 h-4 text-[#6e6e73]" />
-              <span className="text-sm text-[#1d1d1f]">开启推理</span>
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <button type="button" onClick={()=>setReasoning(!reasoning)}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${reasoning ? 'bg-accent' : 'bg-[var(--border-hover)]'}`}>
+                <motion.div animate={{ x: reasoning ? 20 : 2 }}
+                  transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+                  className="absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white shadow-sm" />
+              </button>
+              <Brain className="w-4 h-4 text-[var(--text-muted)]" />
+              <span className="text-[14px] text-[var(--text-primary)]">开启推理</span>
             </label>
           </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#f0f0f2]">
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={onClose}
-              className="px-5 py-2 text-sm font-medium text-[#6e6e73] bg-[#f5f5f7] rounded-lg hover:bg-[#e5e5e8] transition-colors"
-            >
-              取消
-            </motion.button>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleSave}
-              className="px-5 py-2 text-sm font-medium text-white bg-[#4A90D9] rounded-lg hover:bg-[#3a7bc8] transition-colors shadow-sm"
-            >
-              保存
-            </motion.button>
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--border)]">
+            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={onClose}
+              className="px-5 py-2 text-[13px] font-semibold text-[var(--text-secondary)] bg-[var(--bg-primary)] rounded-[var(--radius-xs)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-200">取消</motion.button>
+            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleSave}
+              className="px-5 py-2 text-[13px] font-semibold text-white bg-accent rounded-[var(--radius-xs)] hover:bg-blue-700 transition-colors duration-200 shadow-sm">保存</motion.button>
           </div>
         </motion.div>
-    </motion.div>
+      </motion.div>
+    </AnimatePresence>
   )
 }

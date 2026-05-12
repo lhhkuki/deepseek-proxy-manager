@@ -17,4 +17,10 @@ export interface LogEntry {
   id: string;
   timestamp: string;
   message: string;
+  level?: 'info' | 'warn' | 'error';
+}
+
+export interface Tab {
+  id: string;
+  label: string;
 }

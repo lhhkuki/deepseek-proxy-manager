@@ -4,51 +4,85 @@
 
 @layer base {
   :root {
-    --bg-primary: #f5f5f7;
-    --bg-card: #ffffff;
-    --text-primary: #1d1d1f;
-    --text-secondary: #6e6e73;
-    --accent: #4A90D9;
-    --success: #34c759;
-    --danger: #ff3b30;
+    --bg-primary: #f6f7f9;
+    --bg-surface: #ffffff;
+    --bg-surface-frosted: rgba(255, 255, 255, 0.82);
+    --bg-surface-hover: #f0f1f4;
+    --bg-surface-hover-frosted: rgba(240, 241, 244, 0.75);
+    --text-primary: #0f1115;
+    --text-secondary: #5e6470;
+    --text-muted: #9ba1ad;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, 0.08);
+    --success: #16a34a;
+    --success-soft: rgba(22, 163, 74, 0.08);
+    --danger: #dc2626;
+    --danger-soft: rgba(220, 38, 38, 0.08);
+    --border: #e5e6ea;
+    --border-hover: #d0d2d8;
+    --radius: 14px;
+    --radius-sm: 10px;
+    --radius-xs: 6px;
   }
 
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+  [data-theme="dark"] {
+    --bg-primary: #0a0c10;
+    --bg-surface: #181a22;
+    --bg-surface-frosted: rgba(24, 26, 34, 0.85);
+    --bg-surface-hover: #242630;
+    --bg-surface-hover-frosted: rgba(36, 38, 48, 0.75);
+    --text-primary: #e8e9ec;
+    --text-secondary: #9ba1ad;
+    --text-muted: #5e6470;
+    --accent: #60a5fa;
+    --accent-soft: rgba(96, 165, 250, 0.10);
+    --success: #4ade80;
+    --success-soft: rgba(74, 222, 128, 0.10);
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, 0.10);
+    --border: #2a2d36;
+    --border-hover: #3a3e48;
   }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-weight: 400;
     background: var(--bg-primary);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow: hidden;
+    transition: background 0.35s ease, color 0.35s ease;
   }
 
-  #root {
-    width: 100vw;
-    height: 100vh;
-    overflow: hidden;
+  #root { width: 100vw; height: 100vh; overflow: hidden; }
+
+  /* Soft ambient glow */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 70% 40% at 30% -5%, rgba(37, 99, 235, 0.045), transparent 60%),
+      radial-gradient(ellipse 50% 35% at 85% 105%, rgba(22, 163, 74, 0.03), transparent 60%);
+    z-index: 0;
   }
 
-  ::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+  [data-theme="dark"] body::before {
+    background:
+      radial-gradient(ellipse 70% 40% at 30% -5%, rgba(96, 165, 250, 0.06), transparent 60%),
+      radial-gradient(ellipse 50% 35% at 85% 105%, rgba(74, 222, 128, 0.04), transparent 60%);
   }
 
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.10); border-radius: 10px; }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.10); }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.18); }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); }
 
-  ::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: 4px;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.25);
-  }
+  input, select, textarea { font-family: inherit; }
 }

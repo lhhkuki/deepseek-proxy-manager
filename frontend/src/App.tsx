@@ -1,4 +1,4 @@
-﻿import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Header from './components/Header'
 import TabBar from './components/TabBar'
@@ -24,74 +24,59 @@ function App() {
   const [port, setPort] = useState(15800)
   const [isRunning, setIsRunning] = useState(false)
   const [autostart, setAutostart] = useState(false)
+  const [loading, setLoading] = useState(true)
 
-  // Load initial data
   useEffect(() => {
-    loadData()
-    const statusInterval = setInterval(loadStatus, 3000)
-    return () => clearInterval(statusInterval)
+    let cancelled = false
+    api.getConfig().then(cfg => {
+      if (cancelled) return
+      setModels(cfg.models || [])
+      setPort(cfg.port || 15800)
+    }).catch(e => console.error('Failed to load config:', e)).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+
+    const statusInterval = setInterval(() => {
+      api.getStatus().then(s => {
+        if (!cancelled) {
+          setIsRunning(s.running)
+          setAutostart(s.autostart)
+        }
+      }).catch(console.error)
+    }, 3000)
+
+    return () => { cancelled = true; clearInterval(statusInterval) }
   }, [])
 
-  // Conditional log polling: only when on logs tab
   useEffect(() => {
     if (activeTab !== 'logs') return
-    loadLogs() // immediate load
-    const interval = setInterval(loadLogs, 1000)
-    return () => clearInterval(interval)
+    let cancelled = false
+    const doLoad = () => {
+      api.getLogs().then(all => {
+        if (!cancelled && all.length > 0) setLogs(all.slice(-500))
+      }).catch(console.error)
+    }
+    doLoad()
+    const interval = setInterval(doLoad, 1000)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [activeTab])
-
-  const loadData = async () => {
-    try {
-      const config = await api.getConfig()
-      setModels(config.models || [])
-      setPort(config.port || 15800)
-    } catch (e) {
-      console.error('Failed to load config:', e)
-    }
-  }
-
-  const loadLogs = async () => {
-    try {
-      const all = await api.getLogs()
-      if (all.length > 0) {
-        setLogs(all.slice(-500))
-      }
-    } catch (e) {
-      console.error('Failed to load logs:', e)
-    }
-  }
-
-  const loadStatus = async () => {
-    try {
-      const status = await api.getStatus()
-      setIsRunning(status.running)
-      setAutostart(status.autostart)
-    } catch (e) {
-      console.error('Failed to load status:', e)
-    }
-  }
 
   const handleToggleModel = useCallback(async (idx: number) => {
     await api.enableModel(idx)
-    const updated = await api.getModels()
-    setModels(updated)
+    setModels(await api.getModels())
   }, [])
 
   const handleDeleteModel = useCallback(async (idx: number) => {
     if (!confirm('确定要删除这个模型吗？')) return
     await api.deleteModel(idx)
-    const updated = await api.getModels()
-    setModels(updated)
+    setModels(await api.getModels())
   }, [])
 
   const handleSaveModel = useCallback(async (model: Model) => {
     const current = await api.getModels()
     const idx = current.findIndex((m: Model) => m.id === model.id)
-    if (idx >= 0) {
-      current[idx] = model
-    } else {
-      current.push(model)
-    }
+    if (idx >= 0) current[idx] = model
+    else current.push(model)
     await api.saveModels(current)
     setModels(await api.getModels())
     setDialogOpen(false)
@@ -127,7 +112,6 @@ function App() {
       } else {
         await api.startProxy()
       }
-      // Poll actual status from server instead of optimistic update
       const status = await api.getStatus()
       setIsRunning(status.running)
     } catch (e) {
@@ -137,7 +121,7 @@ function App() {
   }, [isRunning])
 
   return (
-    <div className="flex flex-col h-screen bg-[#f5f5f7]">
+    <div className="flex flex-col h-screen bg-[var(--bg-primary)] relative z-10">
       <Header isRunning={isRunning} autostart={autostart} onToggleAutostart={handleToggleAutostart} onToggleProxy={handleToggleProxy} />
       <TabBar tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
 
@@ -146,14 +130,15 @@ function App() {
           {activeTab === 'models' && (
             <motion.div
               key="models"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
               className="h-full"
             >
               <ModelsTab
                 models={models}
+                loading={loading}
                 onToggle={handleToggleModel}
                 onDelete={handleDeleteModel}
                 onEdit={handleEditModel}
@@ -164,10 +149,10 @@ function App() {
           {activeTab === 'logs' && (
             <motion.div
               key="logs"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
               className="h-full"
             >
               <LogsTab logs={logs} />
@@ -176,10 +161,10 @@ function App() {
           {activeTab === 'settings' && (
             <motion.div
               key="settings"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
               className="h-full"
             >
               <SettingsTab port={port} onPortChange={handleSaveSettings} />
@@ -191,6 +176,7 @@ function App() {
       <AnimatePresence>
         {dialogOpen && (
           <ModelDialog
+            key={editingModel?.id || 'new'}
             model={editingModel}
             onClose={() => { setDialogOpen(false); setEditingModel(null) }}
             onSave={handleSaveModel}

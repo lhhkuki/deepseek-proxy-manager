@@ -94,12 +94,18 @@ function waitForBackend(retries = 30) {
 
 function stopBackend() {
   if (!backendProcess || backendProcess.killed) return
-  backendProcess.kill('SIGTERM')
+  // Graceful stop via API first
+  try {
+    const req = require('http').request('http://127.0.0.1:15801/api/proxy/stop', { method: 'POST' })
+    req.on('error', () => {})
+    req.write('')
+    req.end()
+  } catch (_) {}
   setTimeout(() => {
     if (backendProcess && !backendProcess.killed) {
-      backendProcess.kill('SIGKILL')
+      backendProcess.kill()
     }
-  }, 3000)
+  }, 2000)
 }
 
 app.whenReady().then(async () => {

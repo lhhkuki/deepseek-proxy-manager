@@ -20,6 +20,9 @@ class ProxyServer:
         self._lock = threading.Lock()
 
     def start(self, port):
+        from .config import is_already_running
+        if is_already_running(port):
+            raise RuntimeError(f"Port {port} is already in use")
         with self._lock:
             if self.running:
                 return
@@ -45,10 +48,13 @@ class ProxyServer:
             srv = self.server
             self.server = None
         if srv:
-
             def _shutdown():
                 try:
                     srv.shutdown()
+                except Exception:
+                    pass
+                try:
+                    srv.server_close()
                 except Exception:
                     pass
             threading.Thread(target=_shutdown, daemon=True).start()
