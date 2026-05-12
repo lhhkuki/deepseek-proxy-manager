@@ -95,8 +95,13 @@ def update_models():
     models = request.json
     if not isinstance(models, list):
         return jsonify({"status": "error", "message": "Invalid models format"}), 400
+    # Filter each model to allowed keys (same as _sanitize_config)
+    sanitized = [
+        {mk: mv for mk, mv in m.items() if mk in ALLOWED_MODEL_KEYS}
+        for m in models if isinstance(m, dict)
+    ]
     cfg = load_config()
-    cfg["models"] = models
+    cfg["models"] = sanitized
     save_config(cfg)
     return jsonify({"status": "ok"})
 

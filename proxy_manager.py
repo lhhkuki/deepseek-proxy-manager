@@ -50,8 +50,13 @@ def main():
         set_proxy_instance(proxy)
 
         def run_api():
-            flask_app.run(host="127.0.0.1", port=api_port, debug=False,
-                          use_reloader=False)
+            try:
+                flask_app.run(host="127.0.0.1", port=api_port, debug=False,
+                              use_reloader=False)
+            except Exception as e:
+                print(f"[API] Flask server crashed: {e}")
+                import traceback
+                traceback.print_exc()
 
         t = threading.Thread(target=run_api, daemon=True)
         t.start()

@@ -394,8 +394,6 @@ class AnthropicTranslateMixin:
         }
 
     def _stream_anthropic(self, anthro_req, base_url, api_key, is_anthropic=True):
-        resp = self._do_fetch("/messages", anthro_req, base_url, api_key, is_anthropic)
-
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -490,6 +488,38 @@ class AnthropicTranslateMixin:
                 self.wfile.flush()
             except Exception:
                 pass
+
+        try:
+            resp = self._do_fetch("/messages", anthro_req, base_url, api_key, is_anthropic)
+        except Exception as e:
+            from urllib.error import HTTPError
+            status = "failed"
+            detail = str(e)
+            if isinstance(e, HTTPError):
+                status = f"upstream_{e.code}"
+                try:
+                    detail = e.read().decode(errors="replace")[:200]
+                except Exception:
+                    pass
+            elif isinstance(e, (ConnectionError, TimeoutError)):
+                status = "connection_error"
+            usage_info = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            self._sse("response.completed", {
+                "type": "response.completed",
+                "response": {
+                    "id": rid, "object": "response",
+                    "model": anthro_req["model"],
+                    "status": status, "output": [],
+                    "usage": usage_info,
+                }
+            })
+            LOG_QUEUE.put_nowait(f"Stream anthropic fetch failed: {detail[:100]}")
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except Exception:
+                pass
+            return
 
         try:
             for line in resp:

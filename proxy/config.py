@@ -19,9 +19,15 @@ def _get_fernet():
     """Get or create a Fernet encryption key bound to this machine."""
     from cryptography.fernet import Fernet
     key_path = os.path.join(HOME, ".codex", ".fernet_key")
+    _FERNET_VERSION = b"F1"
     if os.path.exists(key_path):
         with open(key_path, "rb") as f:
-            key = f.read()
+            raw = f.read()
+        if raw.startswith(_FERNET_VERSION):
+            key = raw[len(_FERNET_VERSION):]
+        else:
+            # Legacy key without version prefix
+            key = raw
     else:
         import platform
         material = "|".join([
@@ -32,7 +38,7 @@ def _get_fernet():
             hashlib.sha256(material).digest())
         os.makedirs(os.path.dirname(key_path), exist_ok=True)
         with open(key_path, "wb") as f:
-            f.write(key)
+            f.write(_FERNET_VERSION + key)
     return Fernet(key)
 
 
@@ -42,7 +48,8 @@ def _encrypt_api_key(plain_key):
     try:
         f = _get_fernet()
         return f.encrypt(plain_key.encode("utf-8")).decode("ascii")
-    except Exception:
+    except Exception as e:
+        LOG_QUEUE.put_nowait(f"Encrypt API key failed: {e}")
         return ""
 
 
