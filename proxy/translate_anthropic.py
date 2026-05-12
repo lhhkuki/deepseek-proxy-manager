@@ -393,8 +393,8 @@ class AnthropicTranslateMixin:
             }
         }
 
-    def _stream_anthropic(self, anthro_req, base_url, api_key):
-        resp = self._do_fetch("/messages", anthro_req, base_url, api_key)
+    def _stream_anthropic(self, anthro_req, base_url, api_key, is_anthropic=True):
+        resp = self._do_fetch("/messages", anthro_req, base_url, api_key, is_anthropic)
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")

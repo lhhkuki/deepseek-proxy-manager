@@ -263,7 +263,7 @@ class OpenAITranslateMixin:
             },
         }
 
-    def _stream(self, chat_req, base_url, api_key):
+    def _stream(self, chat_req, base_url, api_key, is_anthropic=False):
         import json as json_mod
 
         self.send_response(200)
@@ -300,7 +300,7 @@ class OpenAITranslateMixin:
             })
 
         try:
-            resp = self._do_fetch("/chat/completions", chat_req, base_url, api_key)
+            resp = self._do_fetch("/chat/completions", chat_req, base_url, api_key, is_anthropic)
         except Exception:
             self._sse("response.completed", {
                 "type": "response.completed",

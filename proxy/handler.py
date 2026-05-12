@@ -150,11 +150,11 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
 
             if stream:
                 if is_anthropic:
-                    self._stream_anthropic(req_body, base_url, api_key)
+                    self._stream_anthropic(req_body, base_url, api_key, is_anthropic)
                 else:
-                    self._stream(req_body, base_url, api_key)
+                    self._stream(req_body, base_url, api_key, is_anthropic)
             else:
-                data = self._fetch(endpoint, req_body, base_url, api_key)
+                data = self._fetch(endpoint, req_body, base_url, api_key, is_anthropic)
                 if is_anthropic:
                     self._json(200, self._from_anthropic_resp(data))
                 else:
@@ -282,9 +282,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         return "{0}{1}".format(prefix, uuid.uuid4().hex[:24])
 
     @classmethod
-    def _do_fetch(cls, path, data, base_url, api_key, timeout=120):
-        is_anthropic = "kimi.com/coding" in base_url
-
+    def _do_fetch(cls, path, data, base_url, api_key, is_anthropic=False, timeout=120):
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "ClaudeCode/1.0",
@@ -315,14 +313,14 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                     time.sleep(cls.RETRY_DELAY * (attempt + 1))
         raise last_err or RuntimeError("max retries exceeded")
 
-    def _fetch(self, path, data, base_url, api_key):
-        resp = self._do_fetch(path, data, base_url, api_key)
+    def _fetch(self, path, data, base_url, api_key, is_anthropic=False):
+        resp = self._do_fetch(path, data, base_url, api_key, is_anthropic)
         try:
             return json.loads(resp.read())
         finally:
             resp.close()
 
-    def _fetch_with_method(self, path, data, base_url, api_key, method="POST"):
+    def _fetch_with_method(self, path, data, base_url, api_key, is_anthropic=False, method="POST"):
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "ClaudeCode/1.0",
@@ -332,7 +330,6 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             if val:
                 headers[hdr] = val
 
-        is_anthropic = "kimi.com/coding" in base_url
         if is_anthropic:
             headers["x-api-key"] = api_key
             headers["anthropic-version"] = "2023-06-01"
