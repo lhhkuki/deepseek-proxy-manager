@@ -53,9 +53,9 @@ function createWindow() {
     width: 900, height: 700,
     minWidth: 700, minHeight: 500,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      webSecurity: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
     },
     titleBarStyle: 'default',
     backgroundColor: '#f5f5f7',

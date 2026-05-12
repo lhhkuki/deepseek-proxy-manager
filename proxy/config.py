@@ -3,10 +3,17 @@
 import json
 import os
 import sys
+import time
 import queue
 import threading
 import hashlib
 import base64
+import secrets
+
+try:
+    from cryptography.fernet import Fernet
+except ImportError:
+    Fernet = None
 
 LOG_QUEUE = queue.Queue(maxsize=1000)
 
@@ -17,7 +24,8 @@ PID_FILE = os.path.join(HOME, ".codex", "proxy.pid")
 
 def _get_fernet():
     """Get or create a Fernet encryption key bound to this machine."""
-    from cryptography.fernet import Fernet
+    if Fernet is None:
+        raise RuntimeError("cryptography package not installed. Run: pip install cryptography")
     key_path = os.path.join(HOME, ".codex", ".fernet_key")
     _FERNET_VERSION = b"F1"
     if os.path.exists(key_path):
@@ -29,13 +37,8 @@ def _get_fernet():
             # Legacy key without version prefix
             key = raw
     else:
-        import platform
-        material = "|".join([
-            platform.node(), os.environ.get("COMPUTERNAME", ""),
-            os.environ.get("USERDOMAIN", ""), os.path.expanduser("~"),
-        ]).encode("utf-8", errors="replace")
-        key = base64.urlsafe_b64encode(
-            hashlib.sha256(material).digest())
+        import secrets
+        key = base64.urlsafe_b64encode(secrets.token_bytes(32))
         os.makedirs(os.path.dirname(key_path), exist_ok=True)
         with open(key_path, "wb") as f:
             f.write(_FERNET_VERSION + key)
@@ -82,6 +85,7 @@ def _decrypt_api_key(cipher_text):
 
 _REASONING_CACHE = {}
 _MAX_REASONING = 100
+_REASONING_CACHE_TTL = 3600
 _REASONING_LOCK = threading.Lock()
 
 
@@ -99,7 +103,7 @@ def cache_reasoning(chat_req, reasoning_content):
         return
     key = hashlib.sha256(pc.encode()).hexdigest()
     with _REASONING_LOCK:
-        _REASONING_CACHE[key] = reasoning_content
+        _REASONING_CACHE[key] = (reasoning_content, time.time())
         while len(_REASONING_CACHE) > _MAX_REASONING:
             _REASONING_CACHE.pop(next(iter(_REASONING_CACHE)))
 
@@ -131,12 +135,24 @@ DEFAULT_CONFIG = {
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            loaded = json.load(f)
-            # Migrate old config: move global deepseek_base/api_key to models
-            if "deepseek_base" in loaded or "api_key" in loaded:
-                loaded = _migrate_old_config(loaded)
-            return {**DEFAULT_CONFIG, **loaded}
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                loaded = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            LOG_QUEUE.put_nowait("Config corrupted, resetting to defaults")
+            # Keep backup of broken config
+            try:
+                bak = CONFIG_PATH + ".bak"
+                with open(CONFIG_PATH, encoding="utf-8") as src:
+                    with open(bak, "w", encoding="utf-8") as dst:
+                        dst.write(src.read())
+            except Exception:
+                pass
+            return dict(DEFAULT_CONFIG)
+        if "deepseek_base" in loaded or "api_key" in loaded:
+            loaded = _migrate_old_config(loaded)
+        loaded = _decrypt_config_keys(loaded)
+        return {**DEFAULT_CONFIG, **loaded}
     return dict(DEFAULT_CONFIG)
 
 
@@ -162,10 +178,32 @@ def _migrate_old_config(cfg):
     return cfg
 
 
+_ENCRYPT_PREFIX = "enc:v2:"
+
 def save_config(cfg):
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    to_save = dict(cfg)
+    if "models" in to_save:
+        to_save["models"] = []
+        for m in cfg["models"]:
+            mc = dict(m)
+            key = mc.get("api_key", "")
+            if key and not key.startswith(_ENCRYPT_PREFIX):
+                mc["api_key"] = _ENCRYPT_PREFIX + _encrypt_api_key(key)
+            to_save["models"].append(mc)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(to_save, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, CONFIG_PATH)
+
+def _decrypt_config_keys(cfg):
+    """Decrypt API keys in loaded config."""
+    for m in cfg.get("models", []):
+        key = m.get("api_key", "")
+        if key.startswith(_ENCRYPT_PREFIX):
+            m["api_key"] = _decrypt_api_key(key[len(_ENCRYPT_PREFIX):])
+        # If not prefixed, it's old plaintext — leave as-is, will be encrypted on next save
+    return cfg
 
 
 API_KEY_FILE = os.path.join(HOME, ".codex", "proxy_api_key.enc")
@@ -237,6 +275,45 @@ def is_already_running(port):
         return False
 
 
+def cleanup_port(port):
+    """Kill any zombie process holding the proxy port."""
+    import socket
+    import subprocess
+    import sys as _sys
+    # Try PID file first
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, encoding="utf-8") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != os.getpid():
+                try:
+                    subprocess.run(["taskkill", "/PID", str(old_pid), "/F"],
+                                   capture_output=True, timeout=5)
+                except Exception:
+                    pass
+        except (ValueError, OSError):
+            pass
+        try:
+            os.remove(PID_FILE)
+        except OSError:
+            pass
+    # Also check if port is still occupied by an unknown process
+    if _sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True, timeout=5)
+            for line in result.stdout.splitlines():
+                if f"127.0.0.1:{port}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    pid = int(parts[-1])
+                    if pid != os.getpid():
+                        subprocess.run(
+                            ["taskkill", "/PID", str(pid), "/F"],
+                            capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
 def write_pid_file():
     os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
     with open(PID_FILE, "w", encoding="utf-8") as f:
@@ -279,9 +356,5 @@ def set_autostart(enable):
     else:
         if os.path.exists(STARTUP_BAT):
             os.remove(STARTUP_BAT)
-
-
-# --- Legacy tkinter GUI colors (removed, frontend uses Tailwind CSS) ---
-
 
 

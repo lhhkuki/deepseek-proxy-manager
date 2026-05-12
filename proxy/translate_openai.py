@@ -3,7 +3,7 @@
 import json
 import hashlib
 
-from .config import _REASONING_CACHE, _REASONING_LOCK, cache_reasoning, LOG_QUEUE
+from .config import _REASONING_CACHE, _REASONING_LOCK, _REASONING_CACHE_TTL, cache_reasoning, LOG_QUEUE
 
 
 class OpenAITranslateMixin:
@@ -14,7 +14,11 @@ class OpenAITranslateMixin:
         instr = req.get("instructions", "")
         has_system_from_input = False
 
-        for item in req.get("input", []):
+        input_val = req.get("input", [])
+        if not isinstance(input_val, list):
+            raise ValueError("'input' must be a list")
+
+        for item in input_val:
             item_type = item.get("type", "")
             role = item.get("role", "")
 
@@ -35,12 +39,15 @@ class OpenAITranslateMixin:
                 continue
 
             if item_type == "function_call":
+                args = item.get("arguments", "")
+                if isinstance(args, dict):
+                    args = json.dumps(args, ensure_ascii=False)
                 tc = {
                     "type": "function",
                     "id": item.get("call_id", ""),
                     "function": {
                         "name": item.get("name", ""),
-                        "arguments": item.get("arguments", ""),
+                        "arguments": args,
                     }
                 }
                 if (messages and messages[-1].get("role") == "assistant"
@@ -77,9 +84,12 @@ class OpenAITranslateMixin:
                 for tc in tcs:
                     ctc = {"type": "function",
                            "id": tc.get("call_id", tc.get("id", ""))}
+                    args = tc.get("arguments", "")
+                    if isinstance(args, dict):
+                        args = json.dumps(args, ensure_ascii=False)
                     ctc["function"] = {
                         "name": tc.get("name", ""),
-                        "arguments": tc.get("arguments", ""),
+                        "arguments": args,
                     }
                     chat_tcs.append(ctc)
                 msg["tool_calls"] = chat_tcs
@@ -88,6 +98,9 @@ class OpenAITranslateMixin:
 
         if instr and not has_system_from_input:
             messages.insert(0, {"role": "system", "content": instr})
+
+        # Strip orphaned tool_calls/tool messages (DeepSeek strict mode)
+        self._fix_unmatched_tool_calls(messages)
 
         # Inject cached reasoning_content where available
         for i, m in enumerate(messages):
@@ -102,8 +115,25 @@ class OpenAITranslateMixin:
                     with _REASONING_LOCK:
                         rc = _REASONING_CACHE.get(key)
                     if rc:
+                        if isinstance(rc, tuple):
+                            import time
+                            if time.time() - rc[1] > _REASONING_CACHE_TTL:
+                                with _REASONING_LOCK:
+                                    _REASONING_CACHE.pop(key, None)
+                                rc = None
+                            else:
+                                rc = rc[0]
+                    if rc:
                         m["reasoning_content"] = rc
         model = self._map_model(req.get("model", "deepseek-v4-pro"))
+
+        # Final cleanup: remove null/empty fields that upset strict APIs
+        self._sanitize_messages(messages)
+
+        # Debug: log message structure for troubleshooting
+        role_seq = ",".join(f"{m['role']}{'+tc' if m.get('tool_calls') else ''}{'+tid='+m.get('tool_call_id','') if m.get('role')=='tool' else ''}" for m in messages)
+        LOG_QUEUE.put_nowait(f"MSG seq: {role_seq}")
+
         chat = {
             "model": model,
             "messages": messages,
@@ -111,21 +141,24 @@ class OpenAITranslateMixin:
         }
         if req.get("stream"):
             chat["stream_options"] = {"include_usage": True}
-        # Ensure tool_calls messages have reasoning_content before enabling thinking
-        reasoning = req.get("reasoning")
-        if reasoning is None:
-            from .config import get_active_model_config
-            mc = get_active_model_config()
-            reasoning = mc.get("reasoning", False) if mc else False
+        # Always use model config for reasoning, ignore request-level value
+        from .config import get_active_model_config
+        mc = get_active_model_config()
+        reasoning = mc.get("reasoning", False) if mc else False
         if reasoning:
-            fixed = 0
-            for i, m in enumerate(messages):
-                if (m.get("role") == "assistant" and m.get("tool_calls")
-                        and not m.get("reasoning_content")):
-                    m["reasoning_content"] = ""
-                    fixed += 1
-            LOG_QUEUE.put_nowait(f"Thinking enabled, fixed {fixed} missing reasoning_content")
-            chat["thinking"] = {"type": "enabled", "budget_tokens": 8192}
+            # Only inject thinking for models known to support it
+            _reasoning_models = {"deepseek-reasoner", "v4-pro", "r1", "o1", "o3", "o4"}
+            if any(kw in model.lower() for kw in _reasoning_models):
+                fixed = 0
+                for i, m in enumerate(messages):
+                    if (m.get("role") == "assistant" and m.get("tool_calls")
+                            and not m.get("reasoning_content")):
+                        m["reasoning_content"] = ""
+                        fixed += 1
+                LOG_QUEUE.put_nowait(f"Thinking enabled, fixed {fixed} missing reasoning_content")
+                chat["thinking"] = {"type": "enabled", "budget_tokens": 8192}
+            else:
+                LOG_QUEUE.put_nowait(f"Reasoning skipped: model '{model}' does not support thinking")
         for k in ("temperature", "top_p", "frequency_penalty",
                   "presence_penalty"):
             if k in req:
@@ -140,7 +173,12 @@ class OpenAITranslateMixin:
             chat["tool_choice"] = self._xlat_tool_choice(req["tool_choice"])
         text_cfg = req.get("text", {})
         if isinstance(text_cfg, dict) and "format" in text_cfg:
-            chat["response_format"] = text_cfg["format"]
+            fmt = text_cfg["format"]
+            # Only pass through formats DeepSeek/OpenAI-compatible APIs accept
+            if isinstance(fmt, str) and fmt in ("text", "json_object"):
+                chat["response_format"] = {"type": fmt}
+            elif isinstance(fmt, dict) and fmt.get("type") in ("text", "json_object"):
+                chat["response_format"] = fmt
         return chat
 
     def _xlat_tools(self, tools):
@@ -190,6 +228,117 @@ class OpenAITranslateMixin:
                 return {"type": "function",
                         "function": {"name": tool_choice.get("name", "")}}
         return tool_choice
+
+    @staticmethod
+    def _fix_unmatched_tool_calls(messages):
+        """Strip orphaned tool_calls and enforce adjacency: after an assistant
+        with tool_calls, the immediately following messages must be tool messages
+        matching those tool_call_ids with no non-tool messages in between."""
+        i = 0
+        while i < len(messages):
+            m = messages[i]
+            if m.get("role") != "assistant" or not m.get("tool_calls"):
+                i += 1
+                continue
+            tc_ids = {tc.get("id", "") for tc in m["tool_calls"]}
+            if not tc_ids:
+                i += 1
+                continue
+
+            # Collect immediately following tool messages
+            matched = set()
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                tid = messages[j].get("tool_call_id", "")
+                if tid in tc_ids:
+                    matched.add(tid)
+                j += 1
+
+            # Keep only tool_calls that have adjacent matching tool messages
+            orphaned = tc_ids - matched
+            if orphaned:
+                m["tool_calls"] = [
+                    tc for tc in m["tool_calls"]
+                    if tc.get("id", "") not in orphaned
+                ]
+                # Remove orphaned tool messages too
+                j = i + 1
+                while j < len(messages) and messages[j].get("role") == "tool":
+                    if messages[j].get("tool_call_id", "") in orphaned:
+                        messages.pop(j)
+                    else:
+                        j += 1
+
+            # Clean empty tool_calls — DeepSeek rejects empty arrays
+            if not m["tool_calls"]:
+                m.pop("tool_calls", None)
+                if not m.get("content"):
+                    messages.pop(i)
+                    continue
+            i += 1
+
+        # Global pass: remove orphaned + duplicate tool messages, enforce order
+        i = 0
+        seen_ids = set()
+        while i < len(messages):
+            m = messages[i]
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                tc_ids = [tc.get("id", "") for tc in m["tool_calls"] if tc.get("id")]
+                # Collect following tool messages
+                tool_msgs = []
+                j = i + 1
+                while j < len(messages) and messages[j].get("role") == "tool":
+                    tool_msgs.append((j, messages[j]))
+                    j += 1
+                # Build ordered, deduped map of tool_call_id → tool message
+                tid_to_msg = {}
+                for idx, tm in tool_msgs:
+                    tid = tm.get("tool_call_id", "")
+                    if tid and tid not in tid_to_msg:
+                        tid_to_msg[tid] = tm
+                # Remove ALL following tool messages
+                for idx, _ in reversed(tool_msgs):
+                    messages.pop(idx)
+                # Re-insert tool messages in correct order, matching tool_calls
+                for tid in tc_ids:
+                    if tid in tid_to_msg:
+                        i += 1
+                        messages.insert(i, tid_to_msg[tid])
+                seen_ids.update(tid_to_msg.keys())
+                continue  # i stays at the assistant message position, loop increments to next
+
+            if m.get("role") == "tool":
+                tid = m.get("tool_call_id", "")
+                if not tid or tid not in seen_ids:
+                    messages.pop(i)
+                    continue
+            i += 1
+
+    @staticmethod
+    def _sanitize_messages(messages):
+        """Remove null/empty fields that strict APIs reject."""
+        for m in messages:
+            # content: None → omit (not valid for many providers)
+            if m.get("content") is None:
+                if m.get("tool_calls"):
+                    m.pop("content", None)
+                else:
+                    m["content"] = ""
+            # Empty tool_calls → omit
+            tc = m.get("tool_calls")
+            if tc is not None and len(tc) == 0:
+                m.pop("tool_calls", None)
+            # Non-string or empty reasoning_content → omit or fix
+            rc = m.get("reasoning_content")
+            if rc is not None and not isinstance(rc, str):
+                if isinstance(rc, tuple) and len(rc) > 0:
+                    m["reasoning_content"] = str(rc[0])
+                else:
+                    m.pop("reasoning_content", None)
+            if m.get("reasoning_content") == "":
+                m.pop("reasoning_content", None)
+            # tool_call_id must be non-empty string
+            # Empty tool_call_id handled by _fix_unmatched_tool_calls above
 
     def _to_resp(self, chat_resp, chat_req):
         import json as json_mod
@@ -308,7 +457,7 @@ class OpenAITranslateMixin:
             if isinstance(e, HTTPError):
                 status = f"upstream_{e.code}"
                 try:
-                    detail = e.read().decode(errors="replace")[:200]
+                    detail = e.read().decode(errors="replace")[:2000]
                 except Exception:
                     pass
             elif isinstance(e, (ConnectionError, TimeoutError)):
@@ -323,7 +472,7 @@ class OpenAITranslateMixin:
                     "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
                 }
             })
-            LOG_QUEUE.put_nowait(f"Stream fetch failed: {detail[:100]}")
+            LOG_QUEUE.put_nowait(f"Stream fetch failed: {detail[:500]}")
             try:
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
@@ -332,6 +481,14 @@ class OpenAITranslateMixin:
             return
 
         try:
+            # Set socket timeout to prevent hung threads on stalled streams
+            import socket
+            try:
+                sock = resp.fp.raw._sock if hasattr(resp.fp, 'raw') else resp.fp._sock
+                sock.settimeout(120)
+            except Exception:
+                pass
+
             for raw in resp:
                 if not raw:
                     continue
@@ -359,6 +516,34 @@ class OpenAITranslateMixin:
                             "call_id": tc["call_id"], "name": tc["name"],
                             "arguments": tc["args"]
                         })
+                        # Auto-execute web_search and include result inline
+                        if tc["name"] == "web_search":
+                            try:
+                                args = tc["args"]
+                                if isinstance(args, str):
+                                    args = json_mod.loads(args)
+                                query = args.get("query", "")
+                                from .web_search import search
+                                result = search(query)
+                                out_id = self._gid("fc_output_")
+                                self._sse("response.output_item.added", {
+                                    "type": "response.output_item.added",
+                                    "item": {"id": out_id, "type": "function_call_output",
+                                             "call_id": tc["call_id"], "output": result}
+                                })
+                                self._sse("response.output_item.done", {
+                                    "type": "response.output_item.done",
+                                    "item": {"id": out_id, "type": "function_call_output",
+                                             "call_id": tc["call_id"], "output": result}
+                                })
+                                output_items.append({
+                                    "id": out_id,
+                                    "type": "function_call_output",
+                                    "call_id": tc["call_id"],
+                                    "output": result,
+                                })
+                            except Exception:
+                                pass
                     self._sse("response.completed", {
                         "type": "response.completed",
                         "response": {
@@ -471,26 +656,52 @@ class OpenAITranslateMixin:
                 if not text_closed and full_text:
                     close_text_msg()
                 for tc in tcs.values():
-                    if tc.get("fc_id"):
-                        self._sse("response.function_call_arguments.done", {
-                            "type": "response.function_call_arguments.done",
-                            "item_id": tc["fc_id"],
-                            "name": tc.get("name", ""),
-                            "arguments": tc.get("args", ""),
-                        })
-                        self._sse("response.output_item.done", {
-                            "type": "response.output_item.done",
-                            "item": {"id": tc["fc_id"], "type": "function_call",
-                                     "call_id": tc["call_id"],
-                                     "name": tc.get("name", ""),
-                                     "arguments": tc.get("args", "")}
-                        })
-                        output_items.append({
-                            "id": tc["fc_id"], "type": "function_call",
-                            "call_id": tc["call_id"],
-                            "name": tc.get("name", ""),
-                            "arguments": tc.get("args", "")
-                        })
+                    if not tc.get("fc_id"):
+                        continue
+                    self._sse("response.function_call_arguments.done", {
+                        "type": "response.function_call_arguments.done",
+                        "item_id": tc["fc_id"],
+                        "name": tc.get("name", ""),
+                        "arguments": tc.get("args", ""),
+                    })
+                    self._sse("response.output_item.done", {
+                        "type": "response.output_item.done",
+                        "item": {"id": tc["fc_id"], "type": "function_call",
+                                 "call_id": tc["call_id"],
+                                 "name": tc.get("name", ""),
+                                 "arguments": tc.get("args", "")}
+                    })
+                    output_items.append({
+                        "id": tc["fc_id"], "type": "function_call",
+                        "call_id": tc["call_id"],
+                        "name": tc.get("name", ""),
+                        "arguments": tc.get("args", "")
+                    })
+                    if tc.get("name") == "web_search":
+                        try:
+                            args = tc.get("args", "")
+                            if isinstance(args, str):
+                                args = json_mod.loads(args)
+                            query = args.get("query", "")
+                            from .web_search import search
+                            result = search(query)
+                            out_id = self._gid("fc_output_")
+                            self._sse("response.output_item.added", {
+                                "type": "response.output_item.added",
+                                "item": {"id": out_id, "type": "function_call_output",
+                                         "call_id": tc["call_id"], "output": result}
+                            })
+                            self._sse("response.output_item.done", {
+                                "type": "response.output_item.done",
+                                "item": {"id": out_id, "type": "function_call_output",
+                                         "call_id": tc["call_id"], "output": result}
+                            })
+                            output_items.append({
+                                "id": out_id, "type": "function_call_output",
+                                "call_id": tc["call_id"], "output": result,
+                            })
+                        except Exception:
+                            pass
                 self._sse("response.completed", {
                     "type": "response.completed",
                     "response": {

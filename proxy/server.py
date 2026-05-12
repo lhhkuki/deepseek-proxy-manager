@@ -18,8 +18,13 @@ class ProxyServer:
         self.running = False
         self._handler_class = handler_class
         self._lock = threading.Lock()
+        self._shutdown_thread = None
 
     def start(self, port):
+        # Wait for any in-progress shutdown to complete
+        if self._shutdown_thread and self._shutdown_thread.is_alive():
+            self._shutdown_thread.join(timeout=3)
+        self._shutdown_thread = None
         from .config import is_already_running
         if is_already_running(port):
             raise RuntimeError(f"Port {port} is already in use")
@@ -57,7 +62,8 @@ class ProxyServer:
                     srv.server_close()
                 except Exception:
                     pass
-            threading.Thread(target=_shutdown, daemon=True).start()
+            self._shutdown_thread = threading.Thread(target=_shutdown, daemon=True)
+            self._shutdown_thread.start()
         LOG_QUEUE.put_nowait("Proxy stopped")
 
     def is_running(self):

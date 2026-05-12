@@ -17,23 +17,32 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
   const [reasoning, setReasoning] = useState(false)
   const [upstreamFormat, setUpstreamFormat] = useState('openai')
   const [showKey, setShowKey] = useState(false)
+  const [idError, setIdError] = useState(false)
 
   useEffect(() => {
-    const values = model
-      ? [model.id, model.name, model.base_url, model.api_key, model.reasoning || false, model.upstream_format || 'openai']
-      : ['', '', 'https://api.deepseek.com', '', false, 'openai']
-    queueMicrotask(() => {
-      setId(values[0] as string)
-      setName(values[1] as string)
-      setBaseUrl(values[2] as string)
-      setApiKey(values[3] as string)
-      setReasoning(values[4] as boolean)
-      setUpstreamFormat(values[5] as string)
-    })
+    if (model) {
+      setId(model.id)
+      setName(model.name)
+      setBaseUrl(model.base_url)
+      setApiKey(model.api_key)
+      setReasoning(model.reasoning || false)
+      setUpstreamFormat(model.upstream_format || 'openai')
+    } else {
+      setId('')
+      setName('')
+      setBaseUrl('https://api.deepseek.com')
+      setApiKey('')
+      setReasoning(false)
+      setUpstreamFormat('openai')
+    }
   }, [model])
 
   const handleSave = () => {
-    if (!id.trim()) return
+    if (!id.trim()) {
+      setIdError(true)
+      return
+    }
+    setIdError(false)
     onSave({
       id: id.trim(),
       name: name.trim() || id.trim(),
@@ -65,14 +74,19 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
           </div>
           <div className="px-6 py-5 space-y-4">
             {[
-              { label: '模型 ID', value: id, onChange: setId, placeholder: '例如: deepseek-v4-pro' },
+              { label: '模型 ID', value: id, onChange: (v: string) => { setId(v); setIdError(false) }, placeholder: '例如: deepseek-v4-pro', error: idError },
               { label: '显示名称', value: name, onChange: setName, placeholder: '例如: DeepSeek V4 Pro' },
               { label: 'API 地址', value: baseUrl, onChange: setBaseUrl, placeholder: 'https://api.deepseek.com' },
-            ].map((field) => (
+            ].map((field: any) => (
               <div key={field.label}>
                 <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5">{field.label}</label>
                 <input type="text" value={field.value} onChange={(e)=>field.onChange(e.target.value)} placeholder={field.placeholder}
-                  className="w-full px-4 py-2.5 bg-[var(--bg-primary)] border border-[var(--border)] rounded-[var(--radius-xs)] text-[var(--text-primary)] text-[14px] outline-none transition-all duration-200 focus:border-accent focus:ring-1 focus:ring-accent/20 focus:bg-surface hover:border-[var(--border-hover)]" />
+                  className={`w-full px-4 py-2.5 bg-[var(--bg-primary)] rounded-[var(--radius-xs)] text-[var(--text-primary)] text-[14px] outline-none transition-all duration-200 focus:ring-1 focus:bg-surface ${
+                    field.error
+                      ? 'border border-danger focus:border-danger focus:ring-danger/20'
+                      : 'border border-[var(--border)] hover:border-[var(--border-hover)] focus:border-accent focus:ring-accent/20'
+                  }`} />
+                {field.error && <p className="text-[12px] text-danger mt-1">模型 ID 不能为空</p>}
               </div>
             ))}
             <div>

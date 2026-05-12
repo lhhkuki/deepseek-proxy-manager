@@ -36,13 +36,18 @@ function App() {
       if (!cancelled) setLoading(false)
     })
 
+    let statusFailures = 0
     const statusInterval = setInterval(() => {
       api.getStatus().then(s => {
         if (!cancelled) {
           setIsRunning(s.running)
           setAutostart(s.autostart)
+          statusFailures = 0
         }
-      }).catch(console.error)
+      }).catch(() => {
+        statusFailures++
+        if (statusFailures >= 3) setIsRunning(false)
+      })
     }, 3000)
 
     return () => { cancelled = true; clearInterval(statusInterval) }
@@ -62,25 +67,37 @@ function App() {
   }, [activeTab])
 
   const handleToggleModel = useCallback(async (idx: number) => {
-    await api.enableModel(idx)
-    setModels(await api.getModels())
+    try {
+      await api.enableModel(idx)
+      setModels(await api.getModels())
+    } catch (e) {
+      console.error('Failed to toggle model:', e)
+    }
   }, [])
 
   const handleDeleteModel = useCallback(async (idx: number) => {
     if (!confirm('确定要删除这个模型吗？')) return
-    await api.deleteModel(idx)
-    setModels(await api.getModels())
+    try {
+      await api.deleteModel(idx)
+      setModels(await api.getModels())
+    } catch (e) {
+      console.error('Failed to delete model:', e)
+    }
   }, [])
 
   const handleSaveModel = useCallback(async (model: Model) => {
-    const current = await api.getModels()
-    const idx = current.findIndex((m: Model) => m.id === model.id)
-    if (idx >= 0) current[idx] = model
-    else current.push(model)
-    await api.saveModels(current)
-    setModels(await api.getModels())
-    setDialogOpen(false)
-    setEditingModel(null)
+    try {
+      const current = await api.getModels()
+      const idx = current.findIndex((m: Model) => m.id === model.id)
+      if (idx >= 0) current[idx] = model
+      else current.push(model)
+      await api.saveModels(current)
+      setModels(await api.getModels())
+      setDialogOpen(false)
+      setEditingModel(null)
+    } catch (e) {
+      console.error('Failed to save model:', e)
+    }
   }, [])
 
   const handleEditModel = useCallback((model: Model) => {
@@ -94,15 +111,24 @@ function App() {
   }, [])
 
   const handleSaveSettings = useCallback(async (newPort: number) => {
-    const config = await api.getConfig()
-    config.port = newPort
-    await api.saveConfig(config)
-    setPort(newPort)
+    try {
+      const config = await api.getConfig()
+      config.port = newPort
+      await api.saveConfig(config)
+      setPort(newPort)
+    } catch (e) {
+      console.error("Failed to save settings:", e)
+      alert("保存设置失败: " + (e instanceof Error ? e.message : String(e)))
+    }
   }, [])
 
   const handleToggleAutostart = useCallback(async (enabled: boolean) => {
-    await api.toggleAutostart(enabled)
-    setAutostart(enabled)
+    try {
+      await api.toggleAutostart(enabled)
+      setAutostart(enabled)
+    } catch (e) {
+      console.error("Failed to toggle autostart:", e)
+    }
   }, [])
 
   const handleToggleProxy = useCallback(async () => {

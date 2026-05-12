@@ -19,14 +19,18 @@ class AnthropicTranslateMixin:
             system_parts.append(instr)
 
         # Collect output call_ids to filter orphaned function_calls
+        input_val = req.get("input", [])
+        if not isinstance(input_val, list):
+            raise ValueError("'input' must be a list")
+
         output_ids = set()
-        for item in req.get("input", []):
+        for item in input_val:
             if item.get("type") == "function_call_output":
                 cid = item.get("call_id", "")
                 if cid:
                     output_ids.add(cid)
 
-        for item in req.get("input", []):
+        for item in input_val:
             item_type = item.get("type", "")
             role = item.get("role", "")
 
@@ -166,20 +170,22 @@ class AnthropicTranslateMixin:
         for k in ("temperature", "top_p",):
             if k in req:
                 body[k] = req[k]
-        # Reasoning: boolean toggle from model config
-        reasoning = req.get("reasoning")
-        if reasoning is None:
-            from .config import get_active_model_config
-            mc = get_active_model_config()
-            reasoning = mc.get("reasoning", False) if mc else False
+        # Always use model config for reasoning, ignore request-level value
+        from .config import get_active_model_config
+        mc = get_active_model_config()
+        reasoning = mc.get("reasoning", False) if mc else False
         if reasoning:
-            for m in messages:
-                if (m.get("role") == "assistant"
-                        and isinstance(m.get("content"), list)
-                        and any(b.get("type") == "tool_use" for b in m["content"])
-                        and not any(b.get("type") == "thinking" for b in m["content"])):
-                    m["content"].insert(0, {"type": "thinking", "thinking": ""})
-            body["thinking"] = {"type": "enabled", "budget_tokens": 8192}
+            _reasoning_models = {"deepseek-reasoner", "v4-pro", "r1", "kimi", "claude", "o1", "o3", "o4"}
+            if any(kw in model.lower() for kw in _reasoning_models):
+                for m in messages:
+                    if (m.get("role") == "assistant"
+                            and isinstance(m.get("content"), list)
+                            and any(b.get("type") == "tool_use" for b in m["content"])
+                            and not any(b.get("type") == "thinking" for b in m["content"])):
+                        m["content"].insert(0, {"type": "thinking", "thinking": ""})
+                body["thinking"] = {"type": "enabled", "budget_tokens": 8192}
+            else:
+                LOG_QUEUE.put_nowait(f"Reasoning skipped: model '{model}' does not support thinking")
         tools = req.get("tools", [])
         if tools:
             anthro_tools = self._xlat_tools_anthropic(tools)
@@ -474,6 +480,31 @@ class AnthropicTranslateMixin:
                         "call_id": tb["tc_id"], "name": tb["name"],
                         "arguments": tb["input_json"]
                     })
+                    if tb["name"] == "web_search":
+                        try:
+                            args = tb["input_json"]
+                            if isinstance(args, str):
+                                args = json_mod.loads(args)
+                            query = args.get("query", "")
+                            from .web_search import search
+                            result = search(query)
+                            out_id = self._gid("fc_output_")
+                            self._sse("response.output_item.added", {
+                                "type": "response.output_item.added",
+                                "item": {"id": out_id, "type": "function_call_output",
+                                         "call_id": tb["tc_id"], "output": result}
+                            })
+                            self._sse("response.output_item.done", {
+                                "type": "response.output_item.done",
+                                "item": {"id": out_id, "type": "function_call_output",
+                                         "call_id": tb["tc_id"], "output": result}
+                            })
+                            output_items.append({
+                                "id": out_id, "type": "function_call_output",
+                                "call_id": tb["tc_id"], "output": result,
+                            })
+                        except Exception:
+                            pass
             self._sse("response.completed", {
                 "type": "response.completed",
                 "response": {
@@ -498,7 +529,7 @@ class AnthropicTranslateMixin:
             if isinstance(e, HTTPError):
                 status = f"upstream_{e.code}"
                 try:
-                    detail = e.read().decode(errors="replace")[:200]
+                    detail = e.read().decode(errors="replace")[:2000]
                 except Exception:
                     pass
             elif isinstance(e, (ConnectionError, TimeoutError)):
@@ -513,7 +544,7 @@ class AnthropicTranslateMixin:
                     "usage": usage_info,
                 }
             })
-            LOG_QUEUE.put_nowait(f"Stream anthropic fetch failed: {detail[:100]}")
+            LOG_QUEUE.put_nowait(f"Stream anthropic fetch failed: {detail[:500]}")
             try:
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
@@ -522,6 +553,14 @@ class AnthropicTranslateMixin:
             return
 
         try:
+            # Set socket timeout to prevent hung threads
+            import socket
+            try:
+                sock = resp.fp.raw._sock if hasattr(resp.fp, 'raw') else resp.fp._sock
+                sock.settimeout(120)
+            except Exception:
+                pass
+
             for line in resp:
                 raw = line.decode("utf-8").strip()
                 if not raw or raw.startswith(":"):
@@ -529,7 +568,10 @@ class AnthropicTranslateMixin:
                 if not raw.startswith("data:"):
                     continue
                 data_str = raw[5:]
-                event = json_mod.loads(data_str)
+                try:
+                    event = json_mod.loads(data_str)
+                except (json_mod.JSONDecodeError, ValueError):
+                    continue
                 evt = event.get("type", "")
 
                 if evt == "message_start":
@@ -599,6 +641,7 @@ class AnthropicTranslateMixin:
                     if idx in tool_blocks:
                         tb = tool_blocks[idx]
                         tb["_done"] = True
+                        tb["_done"] = True
                         self._sse(
                             "response.function_call_arguments.done", {
                                 "type": "response.function_call_arguments.done",
@@ -619,6 +662,31 @@ class AnthropicTranslateMixin:
                             "call_id": tb["tc_id"], "name": tb["name"],
                             "arguments": tb["input_json"]
                         })
+                        if tb["name"] == "web_search":
+                            try:
+                                args = tb["input_json"]
+                                if isinstance(args, str):
+                                    args = json_mod.loads(args)
+                                query = args.get("query", "")
+                                from .web_search import search
+                                result = search(query)
+                                out_id = self._gid("fc_output_")
+                                self._sse("response.output_item.added", {
+                                    "type": "response.output_item.added",
+                                    "item": {"id": out_id, "type": "function_call_output",
+                                             "call_id": tb["tc_id"], "output": result}
+                                })
+                                self._sse("response.output_item.done", {
+                                    "type": "response.output_item.done",
+                                    "item": {"id": out_id, "type": "function_call_output",
+                                             "call_id": tb["tc_id"], "output": result}
+                                })
+                                output_items.append({
+                                    "id": out_id, "type": "function_call_output",
+                                    "call_id": tb["tc_id"], "output": result,
+                                })
+                            except Exception:
+                                pass
 
                 elif evt == "message_delta":
                     du = (event.get("delta", {}).get("usage", {})

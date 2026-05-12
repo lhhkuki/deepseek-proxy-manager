@@ -23,7 +23,7 @@ from proxy.server import ProxyServer
 from proxy.handler import ProxyHandler
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:15801", "file://", "app://"])
 
 proxy_server = None
 _logs_history = []
@@ -40,22 +40,24 @@ def set_proxy_instance(proxy):
 def _drain_log_queue():
     """Drain new messages from LOG_QUEUE into persistent history."""
     global _logs_history
+    # Drain into local buffer first to avoid holding lock per-message
+    batch = []
     while True:
         try:
-            msg = LOG_QUEUE.get_nowait()
+            batch.append(LOG_QUEUE.get_nowait())
         except queue.Empty:
             break
-        try:
-            with _logs_lock:
+    if batch:
+        with _logs_lock:
+            now = datetime.now().strftime("%H:%M:%S")
+            for msg in batch:
                 _logs_history.append({
                     "id": str(next(_log_counter)),
-                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "timestamp": now,
                     "message": msg,
                 })
-                if len(_logs_history) > 500:
-                    _logs_history = _logs_history[-500:]
-        except Exception:
-            break
+            if len(_logs_history) > 500:
+                _logs_history = _logs_history[-500:]
 
 
 @app.route('/api/config', methods=['GET'])
@@ -66,6 +68,28 @@ def get_config():
 ALLOWED_CONFIG_KEYS = {"port", "models"}
 ALLOWED_MODEL_KEYS = {"id", "name", "enabled", "base_url", "api_key", "reasoning", "upstream_format"}
 
+# Block internal/private hosts to prevent SSRF
+_BLOCKED_URL_PREFIXES = (
+    "http://127.", "http://localhost", "http://10.", "http://172.16.",
+    "http://172.17.", "http://172.18.", "http://172.19.", "http://172.20.",
+    "http://172.21.", "http://172.22.", "http://172.23.", "http://172.24.",
+    "http://172.25.", "http://172.26.", "http://172.27.", "http://172.28.",
+    "http://172.29.", "http://172.30.", "http://172.31.", "http://192.168.",
+    "http://0.", "ftp://", "file://",
+)
+
+
+def _validate_base_url(url):
+    """Reject internal/private URLs to prevent SSRF."""
+    if not url:
+        return
+    lower = url.lower().strip()
+    if not lower.startswith("https://"):
+        raise ValueError(f"base_url must use HTTPS: {url[:60]}")
+    for prefix in _BLOCKED_URL_PREFIXES:
+        if lower.startswith(prefix):
+            raise ValueError(f"base_url is not allowed: {url[:60]}")
+
 
 def _sanitize_config(cfg):
     """Strip unknown fields from config to prevent injection."""
@@ -74,10 +98,14 @@ def _sanitize_config(cfg):
         if k in cfg:
             clean[k] = cfg[k]
     if "models" in clean and isinstance(clean["models"], list):
-        clean["models"] = [
-            {mk: mv for mk, mv in m.items() if mk in ALLOWED_MODEL_KEYS}
-            for m in clean["models"] if isinstance(m, dict)
-        ]
+        sanitized = []
+        for m in clean["models"]:
+            if not isinstance(m, dict):
+                continue
+            sm = {mk: mv for mk, mv in m.items() if mk in ALLOWED_MODEL_KEYS}
+            _validate_base_url(sm.get("base_url", ""))
+            sanitized.append(sm)
+        clean["models"] = sanitized
     return clean
 
 
@@ -101,11 +129,16 @@ def update_models():
     models = request.json
     if not isinstance(models, list):
         return jsonify({"status": "error", "message": "Invalid models format"}), 400
-    # Filter each model to allowed keys (same as _sanitize_config)
-    sanitized = [
-        {mk: mv for mk, mv in m.items() if mk in ALLOWED_MODEL_KEYS}
-        for m in models if isinstance(m, dict)
-    ]
+    sanitized = []
+    for m in models:
+        if not isinstance(m, dict):
+            continue
+        sm = {mk: mv for mk, mv in m.items() if mk in ALLOWED_MODEL_KEYS}
+        try:
+            _validate_base_url(sm.get("base_url", ""))
+        except ValueError as e:
+            return jsonify({"status": "error", "message": str(e)}), 400
+        sanitized.append(sm)
     cfg = load_config()
     cfg["models"] = sanitized
     save_config(cfg)
@@ -178,6 +211,8 @@ def stop_proxy():
 
 @app.route('/api/autostart', methods=['POST'])
 def toggle_autostart():
+    if not isinstance(request.json, dict):
+        return jsonify({"status": "error", "message": "Invalid request"}), 400
     enabled = request.json.get("enabled", False)
     set_autostart(enabled)
     return jsonify({"status": "ok"})

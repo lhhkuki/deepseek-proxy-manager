@@ -11,7 +11,7 @@ import threading
 import time
 from proxy.config import (
     CONFIG_PATH, DEFAULT_CONFIG, save_config, load_config,
-    is_already_running, LOG_QUEUE, write_pid_file, remove_pid_file,
+    write_pid_file, remove_pid_file,
 )
 from proxy.server import ProxyServer
 from proxy.handler import ProxyHandler
@@ -21,13 +21,13 @@ def main():
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     if not os.path.exists(CONFIG_PATH):
         save_config(DEFAULT_CONFIG)
+    from proxy.config import cleanup_port
+
     cfg = load_config()
     port = cfg.get("port", 15800)
 
-    if is_already_running(port):
-        print(f"Proxy already running on port {port}")
-        # Still try to open frontend
-        return
+    # Kill any zombie process from a previous run
+    cleanup_port(port)
 
     # Start proxy server
     proxy = ProxyServer(ProxyHandler)

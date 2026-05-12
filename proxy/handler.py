@@ -18,7 +18,7 @@ MAX_BODY_SIZE = 10 * 1024 * 1024
 MAX_RESPONSE_SIZE = 50 * 1024 * 1024
 
 CORS_HEADERS = [
-    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Origin", "http://127.0.0.1:15801"),
     ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
     ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
 ]
@@ -112,11 +112,37 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         if self.path == "/v1/responses":
             self._handle_responses()
         elif self.path.startswith("/v1/"):
-            # Other v1 endpoints not yet implemented
-            self._safe_json(501, {"error": "Not implemented"})
+            # Pass unknown v1 endpoints through to upstream
+            self._passthrough_post(self.path)
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _passthrough_post(self, path):
+        """Forward an unknown POST request to the upstream API."""
+        try:
+            body = self._read_body()
+            model_cfg = get_active_model_config()
+            if not model_cfg:
+                self._safe_json(500, {"error": "No model configured"})
+                return
+            base_url = model_cfg.get("base_url", "")
+            api_key = model_cfg.get("api_key", "")
+            if not api_key:
+                self._safe_json(401, {"error": "API Key not configured"})
+                return
+            is_anthropic = self._is_anthropic_upstream(base_url, model_cfg)
+            data = self._fetch_with_method(path.lstrip("/"), body, base_url, api_key, is_anthropic, method="POST")
+            self._json(200, data)
+        except HTTPError as e:
+            err = ""
+            try:
+                err = e.read().decode(errors="replace")[:500]
+            except Exception:
+                pass
+            self._safe_json(e.code, {"error": f"Upstream {e.code}: {err}"})
+        except Exception as e:
+            self._safe_json(502, {"error": str(e)})
 
     def _is_anthropic_upstream(self, base_url, model_cfg=None):
         if model_cfg:
@@ -162,10 +188,16 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                     self._json(200, self._from_anthropic_resp(data))
                 else:
                     self._json(200, self._to_resp(data, req_body))
+        except ValueError as e:
+            msg = str(e)
+            if "too large" in msg:
+                self._safe_json(413, {"error": msg})
+            else:
+                self._safe_json(400, {"error": msg})
         except HTTPError as e:
             err = ""
             try:
-                err = e.read().decode(errors="replace")[:300]
+                err = e.read().decode(errors="replace")[:500]
             except Exception:
                 pass
             LOG_QUEUE.put_nowait(f"Upstream {e.code}: {err}")
@@ -252,7 +284,10 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         return fallback
 
     def _read_body(self):
-        cl = int(self.headers.get("Content-Length", 0))
+        try:
+            cl = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            raise ValueError("Invalid Content-Length header")
         if cl > MAX_BODY_SIZE:
             raise ValueError("Request body too large: {0} bytes".format(cl))
         if cl <= 0:
@@ -313,13 +348,17 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 if 400 <= e.code < 500:
                     raise
                 last_err = e
+                try:
+                    e.close()
+                except Exception:
+                    pass
                 if attempt < cls.MAX_RETRIES - 1:
-                    time.sleep(cls.RETRY_DELAY * (attempt + 1))
+                    time.sleep(cls.RETRY_DELAY * (2 ** attempt))
             except (RemoteDisconnected, ConnectionResetError,
                     TimeoutError, OSError) as e:
                 last_err = e
                 if attempt < cls.MAX_RETRIES - 1:
-                    time.sleep(cls.RETRY_DELAY * (attempt + 1))
+                    time.sleep(cls.RETRY_DELAY * (2 ** attempt))
         raise last_err or RuntimeError("max retries exceeded")
 
     def _fetch(self, path, data, base_url, api_key, is_anthropic=False):
