@@ -156,6 +156,7 @@ class AnthropicTranslateMixin:
 
         # Ensure every tool_use has a matching tool_result
         self._fix_unmatched_tool_uses(messages)
+        self._merge_consecutive_anthro(messages)
 
         model = self._map_model(req.get("model", "deepseek-v4-pro"))
         body = {
@@ -203,6 +204,24 @@ class AnthropicTranslateMixin:
             messages[-1]["content"].append(block)
         else:
             messages.append({"role": role, "content": [block]})
+
+    @staticmethod
+    def _merge_consecutive_anthro(messages):
+        """Merge consecutive messages with the same role (Anthropic rejects them)."""
+        i = 1
+        while i < len(messages):
+            prev = messages[i - 1]
+            curr = messages[i]
+            if prev.get("role") == curr.get("role") and prev.get("role") in ("user", "assistant", "system"):
+                pc = prev.get("content", "")
+                cc = curr.get("content", "")
+                if isinstance(pc, str) and isinstance(cc, str):
+                    prev["content"] = f"{pc}\n{cc}".strip()
+                elif isinstance(pc, list) and isinstance(cc, list):
+                    prev["content"] = pc + cc
+                messages.pop(i)
+                continue
+            i += 1
 
     @staticmethod
     def _fix_unmatched_tool_uses(messages):

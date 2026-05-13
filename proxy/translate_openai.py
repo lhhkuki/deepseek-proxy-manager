@@ -127,6 +127,9 @@ class OpenAITranslateMixin:
                         m["reasoning_content"] = rc
         model = self._map_model(req.get("model", "deepseek-v4-pro"))
 
+        # Merge consecutive messages with the same role (APIs reject duplicates)
+        self._merge_consecutive(messages)
+
         # Final cleanup: remove null/empty fields that upset strict APIs
         self._sanitize_messages(messages)
 
@@ -312,6 +315,24 @@ class OpenAITranslateMixin:
                 if not tid or tid not in seen_ids:
                     messages.pop(i)
                     continue
+            i += 1
+
+    @staticmethod
+    def _merge_consecutive(messages):
+        """Merge consecutive messages with the same non-tool role."""
+        i = 1
+        while i < len(messages):
+            prev = messages[i - 1]
+            curr = messages[i]
+            # Only merge plain user/user or assistant/assistant (no tool_calls in either)
+            if (prev.get("role") == curr.get("role")
+                    and prev.get("role") in ("user", "assistant", "system")
+                    and not prev.get("tool_calls") and not curr.get("tool_calls")):
+                pc = prev.get("content", "")
+                cc = curr.get("content", "")
+                prev["content"] = f"{pc}\n{cc}".strip()
+                messages.pop(i)
+                continue
             i += 1
 
     @staticmethod
