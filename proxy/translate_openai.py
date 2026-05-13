@@ -205,7 +205,7 @@ class OpenAITranslateMixin:
                     }
                 })
                 continue
-            # Pass through all tool types — let the model decide what it can use
+            # Only forward recognized tool types
             if "function" in tool:
                 result.append(tool)
             elif "name" in tool:
@@ -214,8 +214,7 @@ class OpenAITranslateMixin:
                     if k in tool:
                         fn[k] = tool[k]
                 result.append({"type": "function", "function": fn})
-            else:
-                result.append(tool)
+            # else: skip unknown types (image_generation, etc.) — DeepSeek doesn't support them
         return result
 
     def _xlat_tool_choice(self, tool_choice):

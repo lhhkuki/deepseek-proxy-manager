@@ -337,13 +337,7 @@ class AnthropicTranslateMixin:
                     "input_schema": tool.get(
                         "parameters", {"type": "object", "properties": {}}),
                 })
-            else:
-                result.append({
-                    "name": tool.get(
-                        "id", f"tool_{_uuid.uuid4().hex[:8]}"),
-                    "description": tool.get("description", ""),
-                    "input_schema": {"type": "object", "properties": {}},
-                })
+            # else: skip unknown types (image_generation, etc.)
         return result
 
     def _from_anthropic_resp(self, anthro_resp):
