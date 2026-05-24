@@ -185,6 +185,13 @@ def get_status():
     })
 
 
+@app.route('/api/usage', methods=['GET'])
+def get_usage():
+    """Return accumulated token usage stats."""
+    from proxy.config import get_usage_stats
+    return jsonify(get_usage_stats())
+
+
 @app.route('/api/proxy/start', methods=['POST'])
 def start_proxy():
     global proxy_server

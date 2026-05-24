@@ -6,6 +6,7 @@
     "main": "electron/main.cjs",
     "scripts": {
         "dev": "vite",
+        "dev:web": "vite",
         "build": "tsc -b && vite build",
         "lint": "eslint .",
         "preview": "vite preview",

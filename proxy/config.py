@@ -87,6 +87,41 @@ _REASONING_CACHE = {}
 _MAX_REASONING = 100
 _REASONING_CACHE_TTL = 3600
 _REASONING_LOCK = threading.Lock()
+_REASONING_CACHE_FILE = os.path.join(HOME, ".codex", "reasoning_cache.json")
+
+
+def _load_reasoning_cache():
+    """Load reasoning cache from disk, filtering expired entries."""
+    if not os.path.exists(_REASONING_CACHE_FILE):
+        return
+    try:
+        with open(_REASONING_CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        now = time.time()
+        loaded = 0
+        for k, v in data.items():
+            if isinstance(v, list) and len(v) == 2:
+                rc, ts = v
+                if now - ts < _REASONING_CACHE_TTL:
+                    _REASONING_CACHE[k] = (rc, ts)
+                    loaded += 1
+        if loaded:
+            LOG_QUEUE.put_nowait(
+                f"Loaded {loaded} reasoning cache entries from disk")
+    except Exception:
+        pass
+
+
+def _save_reasoning_cache():
+    """Persist reasoning cache to disk."""
+    try:
+        os.makedirs(os.path.dirname(_REASONING_CACHE_FILE), exist_ok=True)
+        with open(_REASONING_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                {k: list(v) for k, v in _REASONING_CACHE.items()},
+                f, ensure_ascii=False)
+    except Exception:
+        pass
 
 
 def cache_reasoning(chat_req, reasoning_content):
@@ -106,6 +141,30 @@ def cache_reasoning(chat_req, reasoning_content):
         _REASONING_CACHE[key] = (reasoning_content, time.time())
         while len(_REASONING_CACHE) > _MAX_REASONING:
             _REASONING_CACHE.pop(next(iter(_REASONING_CACHE)))
+    _save_reasoning_cache()
+
+
+# ── Load persisted cache on import ──
+_load_reasoning_cache()
+
+
+# ── Usage tracking (in-memory, reset on restart) ──
+_USAGE_LOCK = threading.Lock()
+_USAGE = {"input_tokens": 0, "output_tokens": 0, "requests": 0}
+
+
+def track_usage(input_tokens: int, output_tokens: int) -> None:
+    """Accumulate token usage from a completed request."""
+    with _USAGE_LOCK:
+        _USAGE["input_tokens"] += input_tokens
+        _USAGE["output_tokens"] += output_tokens
+        _USAGE["requests"] += 1
+
+
+def get_usage_stats() -> dict:
+    """Return current usage snapshot (thread-safe)."""
+    with _USAGE_LOCK:
+        return dict(_USAGE)
 
 
 DEFAULT_CONFIG = {
@@ -240,11 +299,14 @@ def get_active_model_config():
 def is_already_running(port):
     import socket
     import sys
+    import subprocess
+
     if os.path.exists(PID_FILE):
         try:
             with open(PID_FILE, encoding="utf-8") as f:
                 pid = int(f.read().strip())
             if sys.platform == "win32":
+                # Windows: check process handle via kernel32
                 import ctypes
                 kernel = ctypes.windll.kernel32
                 handle = kernel.OpenProcess(0x0400, False, pid)
@@ -257,16 +319,37 @@ def is_already_running(port):
                     except (ConnectionRefusedError, OSError):
                         os.remove(PID_FILE)
                         return False
-            # Non-Windows: skip process check, just test port
-            try:
-                s = socket.create_connection(("127.0.0.1", port), timeout=0.5)
-                s.close()
-                return True
-            except (ConnectionRefusedError, OSError):
-                os.remove(PID_FILE)
-                return False
+            else:
+                # macOS / Linux: verify PID is alive AND owns the port
+                alive = False
+                try:
+                    os.kill(pid, 0)           # signal 0: check if process exists
+                    alive = True
+                except (OSError, ProcessLookupError):
+                    alive = False
+
+                if alive:
+                    # Verify this PID actually owns the port
+                    try:
+                        r = subprocess.run(
+                            ["lsof", "-ti", f":{port}"],
+                            capture_output=True, text=True, timeout=3)
+                        port_pids = {int(x) for x in r.stdout.strip().split()
+                                     if x.strip().isdigit()}
+                        if pid in port_pids:
+                            return True        # confirmed: our PID owns the port
+                    except Exception:
+                        pass
+                    # PID alive but doesn't own port — stale PID file
+                # PID dead or doesn't own port — clean up stale file
+                try:
+                    os.remove(PID_FILE)
+                except OSError:
+                    pass
         except (ValueError, OSError, ImportError):
             pass
+
+    # Fallback: no PID file, or stale file cleaned up — pure port probe
     try:
         s = socket.create_connection(("127.0.0.1", port), timeout=0.5)
         s.close()
@@ -280,23 +363,35 @@ def cleanup_port(port):
     import socket
     import subprocess
     import sys as _sys
+
+    def _kill_pid(pid):
+        """Cross-platform process termination."""
+        if _sys.platform == "win32":
+            try:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True, timeout=5)
+            except Exception:
+                pass
+        else:
+            try:
+                os.kill(int(pid), 9)
+            except (OSError, ProcessLookupError):
+                pass
+
     # Try PID file first
     if os.path.exists(PID_FILE):
         try:
             with open(PID_FILE, encoding="utf-8") as f:
                 old_pid = int(f.read().strip())
             if old_pid != os.getpid():
-                try:
-                    subprocess.run(["taskkill", "/PID", str(old_pid), "/F"],
-                                   capture_output=True, timeout=5)
-                except Exception:
-                    pass
+                _kill_pid(old_pid)
         except (ValueError, OSError):
             pass
         try:
             os.remove(PID_FILE)
         except OSError:
             pass
+
     # Also check if port is still occupied by an unknown process
     if _sys.platform == "win32":
         try:
@@ -307,9 +402,25 @@ def cleanup_port(port):
                     parts = line.split()
                     pid = int(parts[-1])
                     if pid != os.getpid():
-                        subprocess.run(
-                            ["taskkill", "/PID", str(pid), "/F"],
-                            capture_output=True, timeout=5)
+                        _kill_pid(pid)
+        except Exception:
+            pass
+    else:
+        # macOS / Linux: use lsof to find port owner
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, text=True, timeout=5)
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    pid = int(line)
+                    if pid != os.getpid():
+                        _kill_pid(pid)
+                except ValueError:
+                    pass
         except Exception:
             pass
 
@@ -328,33 +439,98 @@ def remove_pid_file():
             pass
 
 
-STARTUP_BAT = os.path.join(
-    os.environ.get("APPDATA", ""),
-    "Microsoft", "Windows", "Start Menu", "Programs", "Startup",
-    "DeepSeekProxy.bat",
-)
+# ── Autostart: platform-dependent ──
+STARTUP_BAT = None       # Windows .bat file path
+LAUNCHD_PLIST = None     # macOS launchd plist path
+
+if sys.platform == "win32":
+    STARTUP_BAT = os.path.join(
+        os.environ.get("APPDATA", ""),
+        "Microsoft", "Windows", "Start Menu", "Programs", "Startup",
+        "DeepSeekProxy.bat",
+    )
+else:
+    LAUNCHD_PLIST = os.path.expanduser(
+        "~/Library/LaunchAgents/com.deepseek.proxy.plist"
+    )
 
 
 def is_autostart_enabled():
-    return os.path.exists(STARTUP_BAT)
+    """Check if autostart is enabled on current platform."""
+    if sys.platform == "win32":
+        return STARTUP_BAT and os.path.exists(STARTUP_BAT)
+    else:
+        return LAUNCHD_PLIST and os.path.exists(LAUNCHD_PLIST)
 
 
 def set_autostart(enable):
-    if enable:
-        if getattr(sys, 'frozen', False):
-            target = 'start "" "{0}"'.format(sys.executable)
+    """Enable or disable autostart on the current platform."""
+    import subprocess
+
+    if sys.platform == "win32":
+        # ── Windows: write Startup folder .bat ──
+        if enable:
+            if getattr(sys, 'frozen', False):
+                target = 'start "" "{0}"'.format(sys.executable)
+            else:
+                import shutil
+                pythonw = shutil.which("pythonw")
+                if not pythonw:
+                    pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+                main_py = os.path.join(os.path.dirname(
+                    os.path.abspath(__file__)), "..", "proxy_manager.py")
+                target = 'start "" "{0}" "{1}"'.format(pythonw, os.path.normpath(main_py))
+            with open(STARTUP_BAT, "w", encoding="utf-8") as f:
+                f.write("@echo off\n" + target + "\n")
         else:
-            import shutil
-            pythonw = shutil.which("pythonw")
-            if not pythonw:
-                pythonw = sys.executable.replace("python.exe", "pythonw.exe")
-            main_py = os.path.join(os.path.dirname(
-                os.path.abspath(__file__)), "..", "proxy_manager.py")
-            target = 'start "" "{0}" "{1}"'.format(pythonw, os.path.normpath(main_py))
-        with open(STARTUP_BAT, "w", encoding="utf-8") as f:
-            f.write("@echo off\n" + target + "\n")
+            if STARTUP_BAT and os.path.exists(STARTUP_BAT):
+                os.remove(STARTUP_BAT)
     else:
-        if os.path.exists(STARTUP_BAT):
-            os.remove(STARTUP_BAT)
+        # ── macOS: launchd plist ──
+        project_dir = os.path.abspath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), ".."))
+        python3 = sys.executable
+        main_py = os.path.join(project_dir, "proxy_manager.py")
+        log_dir = os.path.expanduser("~/.codex")
+
+        if enable:
+            plist_content = (
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"'
+                ' "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                '<plist version="1.0">\n'
+                '<dict>\n'
+                '    <key>Label</key>\n'
+                '    <string>com.deepseek.proxy</string>\n'
+                '    <key>ProgramArguments</key>\n'
+                '    <array>\n'
+                f'        <string>{python3}</string>\n'
+                f'        <string>{main_py}</string>\n'
+                '    </array>\n'
+                f'    <key>WorkingDirectory</key>\n'
+                f'    <string>{project_dir}</string>\n'
+                '    <key>RunAtLoad</key>\n'
+                '    <true/>\n'
+                '    <key>KeepAlive</key>\n'
+                '    <false/>\n'
+                f'    <key>StandardOutPath</key>\n'
+                f'    <string>{log_dir}/proxy_stdout.log</string>\n'
+                f'    <key>StandardErrorPath</key>\n'
+                f'    <string>{log_dir}/proxy_stderr.log</string>\n'
+                '</dict>\n'
+                '</plist>\n'
+            )
+            os.makedirs(os.path.dirname(LAUNCHD_PLIST), exist_ok=True)
+            with open(LAUNCHD_PLIST, "w", encoding="utf-8") as f:
+                f.write(plist_content)
+            subprocess.run(
+                ["launchctl", "load", LAUNCHD_PLIST],
+                capture_output=True, timeout=5)
+        else:
+            if LAUNCHD_PLIST and os.path.exists(LAUNCHD_PLIST):
+                subprocess.run(
+                    ["launchctl", "unload", LAUNCHD_PLIST],
+                    capture_output=True, timeout=5)
+                os.remove(LAUNCHD_PLIST)
 
 

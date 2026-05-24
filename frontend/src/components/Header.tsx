@@ -1,14 +1,27 @@
 import { motion } from 'framer-motion'
-import { Activity, Power } from 'lucide-react'
+import { Activity, Power, Zap } from 'lucide-react'
 
-interface HeaderProps {
-  isRunning: boolean;
-  autostart: boolean;
-  onToggleAutostart: (enabled: boolean) => void;
-  onToggleProxy: () => void;
+interface UsageStats {
+  input_tokens: number
+  output_tokens: number
+  requests: number
 }
 
-export default function Header({ isRunning, autostart, onToggleAutostart, onToggleProxy }: HeaderProps) {
+interface HeaderProps {
+  isRunning: boolean
+  autostart: boolean
+  usage: UsageStats | null
+  onToggleAutostart: (enabled: boolean) => void
+  onToggleProxy: () => void
+}
+
+function fmt(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+export default function Header({ isRunning, autostart, usage, onToggleAutostart, onToggleProxy }: HeaderProps) {
   return (
     <motion.header
       initial={{ opacity: 0, y: -12 }}
@@ -31,6 +44,23 @@ export default function Header({ isRunning, autostart, onToggleAutostart, onTogg
             </div>
           </div>
         </div>
+
+        {/* ── Usage badge ── */}
+        {usage && usage.requests > 0 && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-[var(--radius-xs)]
+                          bg-[var(--bg-surface-hover)] border border-[var(--border)]
+                          text-[var(--text-secondary)]">
+            <Zap className="w-3.5 h-3.5 text-accent" />
+            <span className="text-[12px] font-mono">
+              <span className="text-[var(--text-primary)] font-semibold">{fmt(usage.input_tokens)}</span>
+              <span className="mx-1 text-[var(--text-muted)]">in</span>
+              <span className="text-[var(--text-primary)] font-semibold">{fmt(usage.output_tokens)}</span>
+              <span className="mx-1 text-[var(--text-muted)]">out</span>
+              <span className="text-[var(--text-muted)]">· {usage.requests}次</span>
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center gap-3">
           <button onClick={onToggleProxy}
             className={`group flex items-center gap-1.5 px-4 py-2 rounded-[var(--radius-xs)] text-[13px] font-semibold transition-all duration-200 ${
