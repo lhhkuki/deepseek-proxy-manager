@@ -748,5 +748,20 @@ class AnthropicTranslateMixin:
                     self.wfile.write(b"data: [DONE]\n\n")
                     self.wfile.flush()
                     completed = True
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
         finally:
             _finalize()
+            # ── Track stream usage ──
+            try:
+                from .config import track_usage
+                ti = usage_info.get("input_tokens", 0)
+                to = usage_info.get("output_tokens", 0)
+                if to > 0 or ti > 0:
+                    track_usage(ti, to)
+            except Exception:
+                pass
+            try:
+                resp.close()
+            except Exception:
+                pass

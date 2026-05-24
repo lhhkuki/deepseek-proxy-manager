@@ -738,6 +738,14 @@ class OpenAITranslateMixin:
                 pass
             total_out = usage_info.get("output_tokens", 0)
             text_len = len(full_text)
+            # ── Track stream usage ──
+            try:
+                from .config import track_usage
+                ti = usage_info.get("input_tokens", 0)
+                if total_out > 0 or ti > 0:
+                    track_usage(ti, total_out)
+            except Exception:
+                pass
             try:
                 resp.close()
             except Exception:

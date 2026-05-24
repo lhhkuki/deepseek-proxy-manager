@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+import uuid
 import traceback
 from http.server import BaseHTTPRequestHandler
 from urllib.request import Request, urlopen
@@ -184,6 +185,16 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                     self._stream(req_body, base_url, api_key, is_anthropic)
             else:
                 data = self._fetch(endpoint, req_body, base_url, api_key, is_anthropic)
+                # ── Track usage ──
+                try:
+                    from .config import track_usage
+                    u = data.get("usage", {})
+                    if is_anthropic:
+                        track_usage(u.get("input_tokens", 0), u.get("output_tokens", 0))
+                    else:
+                        track_usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+                except Exception:
+                    pass
                 if is_anthropic:
                     self._json(200, self._from_anthropic_resp(data))
                 else:
@@ -322,7 +333,6 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             pass
 
     def _gid(self, prefix=""):
-        import uuid
         return "{0}{1}".format(prefix, uuid.uuid4().hex[:24])
 
     @classmethod

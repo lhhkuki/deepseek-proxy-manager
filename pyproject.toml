@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepseek-proxy-manager"
+version = "2.5.1"
+description = "Local proxy to connect Codex Desktop to third-party LLM APIs (DeepSeek, Kimi Code, Moonshot)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "lhhkuki" },
+]
+keywords = ["deepseek", "codex", "proxy", "openai", "anthropic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "flask>=3.1",
+    "flask-cors>=6.0",
+    "cryptography>=48.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+proxy-manager = "proxy_manager:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+
+[tool.setuptools]
+py-modules = ["proxy_manager", "api_server"]

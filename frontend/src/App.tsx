@@ -9,6 +9,12 @@ import ModelDialog from './components/ModelDialog'
 import * as api from './api'
 import type { Model, LogEntry } from './types'
 
+interface UsageStats {
+  input_tokens: number
+  output_tokens: number
+  requests: number
+}
+
 const TABS = [
   { id: 'models', label: '模型' },
   { id: 'logs', label: '日志' },
@@ -25,6 +31,7 @@ function App() {
   const [isRunning, setIsRunning] = useState(false)
   const [autostart, setAutostart] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [usage, setUsage] = useState<UsageStats | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -48,6 +55,10 @@ function App() {
         statusFailures++
         if (statusFailures >= 3) setIsRunning(false)
       })
+      // ── Poll usage stats ──
+      api.getUsage().then(u => {
+        if (!cancelled) setUsage(u)
+      }).catch(() => {})
     }, 3000)
 
     return () => { cancelled = true; clearInterval(statusInterval) }
@@ -148,7 +159,7 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-[var(--bg-primary)] relative z-10">
-      <Header isRunning={isRunning} autostart={autostart} onToggleAutostart={handleToggleAutostart} onToggleProxy={handleToggleProxy} />
+      <Header isRunning={isRunning} autostart={autostart} usage={usage} onToggleAutostart={handleToggleAutostart} onToggleProxy={handleToggleProxy} />
       <TabBar tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
 
       <div className="flex-1 overflow-hidden relative">

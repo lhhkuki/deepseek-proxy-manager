@@ -84,3 +84,8 @@ export async function toggleAutostart(enabled: boolean) {
   })
   return res.json()
 }
+
+export async function getUsage() {
+  const res = await fetchWithRetry(`${API_BASE}/usage`)
+  return res.json() as Promise<{ input_tokens: number; output_tokens: number; requests: number }>
+}
