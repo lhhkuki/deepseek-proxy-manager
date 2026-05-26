@@ -25,6 +25,14 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
   const [notice, setNotice] = useState('')
 
   const currentMode = useMemo(() => modeCopy[codex?.mode || 'official'], [codex])
+  const modeButtonClass = (active: boolean) =>
+    `flex-1 px-4 py-3 rounded-[var(--radius-xs)] border transition-colors disabled:opacity-60 ${
+      active
+        ? 'border-accent bg-accent text-white hover:bg-blue-700 shadow-sm'
+        : 'border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
+    }`
+  const modeDetailClass = (active: boolean) =>
+    `block text-[12px] mt-1 ${active ? 'text-white/75' : 'text-[var(--text-muted)]'}`
 
   const refreshCodex = async () => {
     setBusy('refresh')
@@ -136,14 +144,14 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
 
           <div className="flex flex-col sm:flex-row gap-3">
             <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => applyMode('official')} disabled={busy !== null}
-              className="flex-1 px-4 py-3 rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors disabled:opacity-60">
+              className={modeButtonClass(codex?.mode === 'official')}>
               <span className="block text-[14px] font-semibold">切回官方账号</span>
-              <span className="block text-[12px] text-[var(--text-muted)] mt-1">移除 AIProxyManager provider，不改 auth.json</span>
+              <span className={modeDetailClass(codex?.mode === 'official')}>移除 AIProxyManager provider，不改 auth.json</span>
             </motion.button>
             <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => applyMode('proxy')} disabled={busy !== null}
-              className="flex-1 px-4 py-3 rounded-[var(--radius-xs)] bg-accent text-white hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-60">
+              className={modeButtonClass(codex?.mode === 'proxy')}>
               <span className="block text-[14px] font-semibold">启用第三方插件兼容</span>
-              <span className="block text-[12px] text-white/75 mt-1">保留官方登录态，模型请求走本地代理</span>
+              <span className={modeDetailClass(codex?.mode === 'proxy')}>保留官方登录态，模型请求走本地代理</span>
             </motion.button>
           </div>
 
