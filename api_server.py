@@ -21,6 +21,11 @@ from proxy.config import (
 )
 from proxy.server import ProxyServer
 from proxy.handler import ProxyHandler
+from proxy.codex_config import (
+    codex_config_status,
+    apply_proxy_config,
+    apply_official_config,
+)
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:15801", "file://", "app://"])
@@ -216,6 +221,34 @@ def toggle_autostart():
     enabled = request.json.get("enabled", False)
     set_autostart(enabled)
     return jsonify({"status": "ok"})
+
+
+@app.route('/api/codex-config/status', methods=['GET'])
+def get_codex_config_status():
+    return jsonify(codex_config_status())
+
+
+@app.route('/api/codex-config/proxy', methods=['POST'])
+def use_proxy_codex_config():
+    body = request.json if isinstance(request.json, dict) else {}
+    cfg = load_config()
+    try:
+        status = apply_proxy_config(
+            port=body.get("port") or cfg.get("port", 15800),
+            model=body.get("model"),
+        )
+        return jsonify({"status": "ok", "codex": status})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+
+@app.route('/api/codex-config/official', methods=['POST'])
+def use_official_codex_config():
+    try:
+        status = apply_official_config()
+        return jsonify({"status": "ok", "codex": status})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
 
 
 def run_api(port=15801):

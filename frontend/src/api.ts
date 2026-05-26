@@ -1,4 +1,4 @@
-﻿import type { Model } from './types'
+import type { CodexConfigStatus, Model } from './types'
 
 const API_BASE = 'http://127.0.0.1:15801/api'
 
@@ -83,4 +83,23 @@ export async function toggleAutostart(enabled: boolean) {
     body: JSON.stringify({ enabled }),
   })
   return res.json()
+}
+
+export async function getCodexConfigStatus() {
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/status`)
+  return res.json() as Promise<CodexConfigStatus>
+}
+
+export async function applyProxyCodexConfig(port: number, model?: string) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/proxy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ port, model }),
+  })
+  return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
+}
+
+export async function applyOfficialCodexConfig() {
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/official`, { method: 'POST' })
+  return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
 }

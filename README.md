@@ -70,21 +70,27 @@
 
 ### 4. 配置 Codex
 
-编辑 `C:\Users\你的用户名\.codex\config.toml`，全选替换为：
+推荐在前端「设置」里使用「Codex 配置切换」：
+
+- **官方账号**：切回 ChatGPT 官方登录态，适合使用官方模型。
+- **第三方插件兼容**：保留 ChatGPT 官方登录态，模型请求走本地代理，适合希望 API 中转时继续使用插件市场的场景。
+
+第三方插件兼容模式会自动备份 `C:\Users\你的用户名\.codex\config.toml`，并写入类似配置：
 
 ```toml
-model_provider = "custom"
+model_provider = "AIProxyManager"
 model = "deepseek-v4-pro"
 
 model_context_window = 1000000
 model_auto_compact_token_limit = 900000
 
 [model_providers]
-[model_providers.custom]
-name = "custom"
+[model_providers.AIProxyManager]
+name = "AIProxyManager"
 wire_api = "responses"
-requires_openai_auth = false
+requires_openai_auth = true
 base_url = "http://127.0.0.1:15800/v1"
+experimental_bearer_token = "local-proxy"
 
 [windows]
 sandbox = "elevated"
@@ -100,7 +106,7 @@ use_memories = true
 enabled = true
 ```
 
-> 只需改 `model` 这一行，改成你在前端启用的模型 ID。
+> 插件兼容模式需要你先在 Codex/ChatGPT 完成一次官方账号登录。程序不会修改 `auth.json`，只读取它判断是否存在官方登录态。
 
 保存，重新打开 Codex。
 

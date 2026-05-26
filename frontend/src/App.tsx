@@ -193,7 +193,11 @@ function App() {
               transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
               className="h-full"
             >
-              <SettingsTab port={port} onPortChange={handleSaveSettings} />
+              <SettingsTab
+                port={port}
+                activeModelId={models.find(model => model.enabled)?.id || models[0]?.id}
+                onPortChange={handleSaveSettings}
+              />
             </motion.div>
           )}
         </AnimatePresence>
