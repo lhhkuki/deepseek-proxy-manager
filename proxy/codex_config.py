@@ -1,16 +1,20 @@
 """Codex Desktop config switching helpers."""
 
 import json
+import glob
 import os
 import re
+import shutil
+import sqlite3
 import time
 
 PROVIDER_ID = "AIProxyManager"
+OFFICIAL_PROVIDER_ID = "openai"
 BEARER_TOKEN = "local-proxy"
 
 
 def codex_home():
-    return os.path.join(os.path.expanduser("~"), ".codex")
+    return os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
 
 
 def config_path():
@@ -49,6 +53,18 @@ def _backup_file(path):
     with open(backup_path, "wb") as dst:
         dst.write(data)
     return backup_path
+
+
+def _provider_sync_backup_dir():
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int((time.time() % 1) * 1000):03d}"
+    backup_dir = os.path.join(
+        codex_home(),
+        "backups_proxy_manager",
+        "provider_sync",
+        stamp,
+    )
+    os.makedirs(backup_dir, exist_ok=True)
+    return backup_dir
 
 
 def _toml_quote(value):
@@ -124,6 +140,107 @@ def _remove_table(contents, table_name):
         if not skipping:
             result.append(line)
     return "\n".join(result).strip()
+
+
+def _iter_session_files():
+    home = codex_home()
+    for folder in ("sessions", "archived_sessions"):
+        root = os.path.join(home, folder)
+        if not os.path.isdir(root):
+            continue
+        pattern = os.path.join(root, "**", "*.jsonl")
+        yield from glob.iglob(pattern, recursive=True)
+
+
+def _backup_path(backup_dir, path):
+    rel = os.path.relpath(path, codex_home())
+    target = os.path.join(backup_dir, rel)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    shutil.copy2(path, target)
+
+
+def _sync_session_file_provider(path, target_provider, backup_dir):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return False
+    if not lines:
+        return False
+    try:
+        first = json.loads(lines[0])
+    except json.JSONDecodeError:
+        return False
+    if first.get("type") != "session_meta":
+        return False
+    payload = first.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("model_provider") == target_provider:
+        return False
+
+    stat = os.stat(path)
+    _backup_path(backup_dir, path)
+    payload["model_provider"] = target_provider
+    lines[0] = json.dumps(first, ensure_ascii=False, separators=(",", ":")) + "\n"
+    tmp = path + ".provider-sync.tmp"
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
+        f.writelines(lines)
+    os.replace(tmp, path)
+    os.utime(path, (stat.st_atime, stat.st_mtime))
+    return True
+
+
+def _sync_state_databases_provider(target_provider, backup_dir):
+    changed = 0
+    for db_path in glob.glob(os.path.join(codex_home(), "state_*.sqlite")):
+        for suffix in ("", "-wal", "-shm"):
+            sidecar = db_path + suffix
+            if os.path.exists(sidecar):
+                _backup_path(backup_dir, sidecar)
+        conn = sqlite3.connect(db_path, timeout=2)
+        try:
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(threads)").fetchall()
+            }
+            if "model_provider" not in columns:
+                continue
+            cursor = conn.execute(
+                "UPDATE threads SET model_provider = ? WHERE COALESCE(model_provider, '') <> ?",
+                (target_provider, target_provider),
+            )
+            changed += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            conn.commit()
+        finally:
+            conn.close()
+    return changed
+
+
+def _sync_conversation_provider(target_provider):
+    """Keep Codex conversations visible after switching model providers."""
+    result = {
+        "target_provider": target_provider,
+        "changed_session_files": 0,
+        "sqlite_rows_updated": 0,
+        "backup_dir": "",
+        "message": "",
+    }
+    if not os.path.isdir(codex_home()):
+        result["message"] = "未找到 Codex 目录，跳过会话同步"
+        return result
+
+    backup_dir = _provider_sync_backup_dir()
+    result["backup_dir"] = backup_dir
+    try:
+        for path in _iter_session_files():
+            if _sync_session_file_provider(path, target_provider, backup_dir):
+                result["changed_session_files"] += 1
+        result["sqlite_rows_updated"] = _sync_state_databases_provider(target_provider, backup_dir)
+        result["message"] = "已同步 Codex 会话 provider"
+    except Exception as exc:
+        result["message"] = f"会话 provider 同步失败：{exc}"
+    return result
 
 
 def _active_model_id():
@@ -230,6 +347,7 @@ def apply_proxy_config(port=None, model=None):
     _write_text(path, updated)
     status = codex_config_status()
     status["backup_path"] = backup_path
+    status["conversation_sync"] = _sync_conversation_provider(PROVIDER_ID)
     return status
 
 
@@ -243,4 +361,5 @@ def apply_official_config():
     _write_text(path, contents + ("\n" if contents else ""))
     status = codex_config_status()
     status["backup_path"] = backup_path
+    status["conversation_sync"] = _sync_conversation_provider(OFFICIAL_PROVIDER_ID)
     return status

@@ -29,6 +29,13 @@ export interface CodexConfigStatus {
   exists: boolean;
   auth: CodexAuthStatus;
   backup_path?: string;
+  conversation_sync?: {
+    target_provider: string;
+    changed_session_files: number;
+    sqlite_rows_updated: number;
+    backup_dir: string;
+    message: string;
+  };
 }
 
 export interface LogEntry {

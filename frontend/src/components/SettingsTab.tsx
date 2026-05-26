@@ -79,7 +79,11 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
         throw new Error(result.message || '切换失败')
       }
       setCodex(result.codex)
-      setNotice(result.codex.backup_path ? `已备份：${result.codex.backup_path}` : '已写入 Codex 配置')
+      const sync = result.codex.conversation_sync
+      const syncText = sync
+        ? `；会话同步 ${sync.changed_session_files} 个文件 / ${sync.sqlite_rows_updated} 条索引`
+        : ''
+      setNotice((result.codex.backup_path ? `已备份：${result.codex.backup_path}` : '已写入 Codex 配置') + syncText)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
