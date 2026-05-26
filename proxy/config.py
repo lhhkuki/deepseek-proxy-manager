@@ -22,6 +22,20 @@ CONFIG_PATH = os.path.join(HOME, ".codex", "proxy_config.json")
 PID_FILE = os.path.join(HOME, ".codex", "proxy.pid")
 
 
+def safe_log(msg):
+    try:
+        LOG_QUEUE.put_nowait(msg)
+    except queue.Full:
+        try:
+            LOG_QUEUE.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            LOG_QUEUE.put_nowait(msg)
+        except queue.Full:
+            pass
+
+
 def _get_fernet():
     """Get or create a Fernet encryption key bound to this machine."""
     if Fernet is None:
@@ -52,8 +66,8 @@ def _encrypt_api_key(plain_key):
         f = _get_fernet()
         return f.encrypt(plain_key.encode("utf-8")).decode("ascii")
     except Exception as e:
-        LOG_QUEUE.put_nowait(f"Encrypt API key failed: {e}")
-        return ""
+        safe_log(f"Encrypt API key failed: {e}")
+        raise RuntimeError(f"Encrypt API key failed: {e}") from e
 
 
 def _decrypt_api_key(cipher_text):
@@ -139,7 +153,7 @@ def load_config():
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 loaded = json.load(f)
         except (json.JSONDecodeError, OSError):
-            LOG_QUEUE.put_nowait("Config corrupted, resetting to defaults")
+            safe_log("Config corrupted, resetting to defaults")
             # Keep backup of broken config
             try:
                 bak = CONFIG_PATH + ".bak"
@@ -189,7 +203,10 @@ def save_config(cfg):
             mc = dict(m)
             key = mc.get("api_key", "")
             if key and not key.startswith(_ENCRYPT_PREFIX):
-                mc["api_key"] = _ENCRYPT_PREFIX + _encrypt_api_key(key)
+                encrypted = _encrypt_api_key(key)
+                if not encrypted:
+                    raise RuntimeError("Encrypt API key failed")
+                mc["api_key"] = _ENCRYPT_PREFIX + encrypted
             to_save["models"].append(mc)
     tmp = CONFIG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -276,10 +293,8 @@ def is_already_running(port):
 
 
 def cleanup_port(port):
-    """Kill any zombie process holding the proxy port."""
-    import socket
+    """Clean up stale PID state without killing unrelated port owners."""
     import subprocess
-    import sys as _sys
     # Try PID file first
     if os.path.exists(PID_FILE):
         try:
@@ -296,21 +311,6 @@ def cleanup_port(port):
         try:
             os.remove(PID_FILE)
         except OSError:
-            pass
-    # Also check if port is still occupied by an unknown process
-    if _sys.platform == "win32":
-        try:
-            result = subprocess.run(
-                ["netstat", "-ano"], capture_output=True, text=True, timeout=5)
-            for line in result.stdout.splitlines():
-                if f"127.0.0.1:{port}" in line and "LISTENING" in line:
-                    parts = line.split()
-                    pid = int(parts[-1])
-                    if pid != os.getpid():
-                        subprocess.run(
-                            ["taskkill", "/PID", str(pid), "/F"],
-                            capture_output=True, timeout=5)
-        except Exception:
             pass
 
 

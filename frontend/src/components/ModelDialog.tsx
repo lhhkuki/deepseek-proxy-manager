@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Eye, EyeOff, Brain } from 'lucide-react'
 import type { Model } from '../types'
@@ -9,33 +9,23 @@ interface ModelDialogProps {
   onSave: (model: Model) => void;
 }
 
+interface TextField {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  error?: boolean;
+}
+
 export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps) {
-  const [id, setId] = useState('')
-  const [name, setName] = useState('')
-  const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com')
-  const [apiKey, setApiKey] = useState('')
-  const [reasoning, setReasoning] = useState(false)
-  const [upstreamFormat, setUpstreamFormat] = useState('openai')
+  const [id, setId] = useState(() => model?.id ?? '')
+  const [name, setName] = useState(() => model?.name ?? '')
+  const [baseUrl, setBaseUrl] = useState(() => model?.base_url ?? 'https://api.deepseek.com')
+  const [apiKey, setApiKey] = useState(() => model?.api_key ?? '')
+  const [reasoning, setReasoning] = useState(() => model?.reasoning ?? false)
+  const [upstreamFormat, setUpstreamFormat] = useState(() => model?.upstream_format ?? 'openai')
   const [showKey, setShowKey] = useState(false)
   const [idError, setIdError] = useState(false)
-
-  useEffect(() => {
-    if (model) {
-      setId(model.id)
-      setName(model.name)
-      setBaseUrl(model.base_url)
-      setApiKey(model.api_key)
-      setReasoning(model.reasoning || false)
-      setUpstreamFormat(model.upstream_format || 'openai')
-    } else {
-      setId('')
-      setName('')
-      setBaseUrl('https://api.deepseek.com')
-      setApiKey('')
-      setReasoning(false)
-      setUpstreamFormat('openai')
-    }
-  }, [model])
 
   const handleSave = () => {
     if (!id.trim()) {
@@ -73,11 +63,11 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
             </motion.button>
           </div>
           <div className="px-6 py-5 space-y-4">
-            {[
+            {([
               { label: '模型 ID', value: id, onChange: (v: string) => { setId(v); setIdError(false) }, placeholder: '例如: deepseek-v4-pro', error: idError },
               { label: '显示名称', value: name, onChange: setName, placeholder: '例如: DeepSeek V4 Pro' },
               { label: 'API 地址', value: baseUrl, onChange: setBaseUrl, placeholder: 'https://api.deepseek.com' },
-            ].map((field: any) => (
+            ] satisfies TextField[]).map((field) => (
               <div key={field.label}>
                 <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5">{field.label}</label>
                 <input type="text" value={field.value} onChange={(e)=>field.onChange(e.target.value)} placeholder={field.placeholder}

@@ -4,7 +4,7 @@ import threading
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
 
-from .config import LOG_QUEUE
+from .config import safe_log
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -37,9 +37,9 @@ class ProxyServer:
                 self.thread = threading.Thread(target=self._run, daemon=True)
                 self.thread.start()
                 self.running = True
-                LOG_QUEUE.put_nowait(f"Proxy started on port {port}")
+                safe_log(f"Proxy started on port {port}")
             except Exception as e:
-                LOG_QUEUE.put_nowait(f"ERROR: {e}")
+                safe_log(f"ERROR: {e}")
                 raise
 
     def _run(self):
@@ -64,7 +64,7 @@ class ProxyServer:
                     pass
             self._shutdown_thread = threading.Thread(target=_shutdown, daemon=True)
             self._shutdown_thread.start()
-        LOG_QUEUE.put_nowait("Proxy stopped")
+        safe_log("Proxy stopped")
 
     def is_running(self):
         return self.running

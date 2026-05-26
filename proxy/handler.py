@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from http.client import RemoteDisconnected
 
-from .config import load_config, get_active_model_config, LOG_QUEUE
+from .config import load_config, get_active_model_config, safe_log
 from .translate_openai import OpenAITranslateMixin
 from .translate_anthropic import AnthropicTranslateMixin
 
@@ -34,13 +34,13 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
     RETRY_DELAY = 2
 
     def _log_detail(self, msg):
-        LOG_QUEUE.put_nowait(msg)
+        safe_log(msg)
 
     def log_request(self, code="-", size="-"):
         cmd = "".join(c for c in self.command if c.isalpha())[:10]
         path = self.path[:200].replace("\n", "").replace("\r", "")
         msg = "{0} {1} -> {2}".format(cmd, path, str(code)[:10])
-        LOG_QUEUE.put_nowait(msg)
+        safe_log(msg)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -132,7 +132,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 self._safe_json(401, {"error": "API Key not configured"})
                 return
             is_anthropic = self._is_anthropic_upstream(base_url, model_cfg)
-            data = self._fetch_with_method(path.lstrip("/"), body, base_url, api_key, is_anthropic, method="POST")
+            data = self._fetch_with_method(path, body, base_url, api_key, is_anthropic, method="POST")
             self._json(200, data)
         except HTTPError as e:
             err = ""
@@ -166,7 +166,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 self._safe_json(401, {"error": "API Key not configured for this model. Please add it in the proxy settings."})
                 return
 
-            LOG_QUEUE.put_nowait(f"REQ model={model_cfg.get('id','?')} stream={stream} base={base_url[:50]}")
+            safe_log(f"REQ model={model_cfg.get('id','?')} stream={stream} base={base_url[:50]}")
 
             is_anthropic = self._is_anthropic_upstream(base_url, model_cfg)
 
@@ -200,12 +200,12 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                 err = e.read().decode(errors="replace")[:500]
             except Exception:
                 pass
-            LOG_QUEUE.put_nowait(f"Upstream {e.code}: {err}")
+            safe_log(f"Upstream {e.code}: {err}")
             self._safe_json(e.code, {"error": f"Upstream {e.code}: {err}"})
         except ConnectionAbortedError:
             pass
         except Exception as e:
-            LOG_QUEUE.put_nowait(f"FATAL: {e}")
+            safe_log(f"FATAL: {e}")
             traceback.print_exc()
             self._safe_json(502, {"error": str(e)})
 
@@ -270,17 +270,17 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         models = cfg.get("models", [])
         enabled_models = [m for m in models if m.get("enabled", True)]
         if not enabled_models:
-            LOG_QUEUE.put_nowait("No enabled models, falling back to deepseek-chat")
+            safe_log("No enabled models, falling back to deepseek-chat")
             return "deepseek-chat"
         known = {m["id"] for m in enabled_models}
         if model_name in known:
             return model_name
         for m in models:
             if m["id"] == model_name:
-                LOG_QUEUE.put_nowait("Model '{0}' disabled, using fallback".format(model_name))
+                safe_log("Model '{0}' disabled, using fallback".format(model_name))
                 break
         fallback = enabled_models[0]["id"]
-        LOG_QUEUE.put_nowait("Mapped unknown model '{0}' -> '{1}'".format(model_name, fallback))
+        safe_log("Mapped unknown model '{0}' -> '{1}'".format(model_name, fallback))
         return fallback
 
     def _read_body(self):
@@ -295,7 +295,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         try:
             return json.loads(self.rfile.read(cl))
         except json.JSONDecodeError as e:
-            LOG_QUEUE.put_nowait(f"JSON parse error: {e}")
+            safe_log(f"JSON parse error: {e}")
             raise ValueError("Invalid JSON in request body")
 
     def _json(self, status, data):
@@ -372,6 +372,8 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             resp.close()
 
     def _fetch_with_method(self, path, data, base_url, api_key, is_anthropic=False, method="POST"):
+        if not path.startswith("/"):
+            path = "/" + path
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "ClaudeCode/1.0",

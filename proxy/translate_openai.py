@@ -3,7 +3,7 @@
 import json
 import hashlib
 
-from .config import _REASONING_CACHE, _REASONING_LOCK, _REASONING_CACHE_TTL, cache_reasoning, LOG_QUEUE
+from .config import _REASONING_CACHE, _REASONING_LOCK, _REASONING_CACHE_TTL, cache_reasoning, safe_log
 
 
 class OpenAITranslateMixin:
@@ -135,7 +135,7 @@ class OpenAITranslateMixin:
 
         # Debug: log message structure for troubleshooting
         role_seq = ",".join(f"{m['role']}{'+tc' if m.get('tool_calls') else ''}{'+tid='+m.get('tool_call_id','') if m.get('role')=='tool' else ''}" for m in messages)
-        LOG_QUEUE.put_nowait(f"MSG seq: {role_seq}")
+        safe_log(f"MSG seq: {role_seq}")
 
         chat = {
             "model": model,
@@ -158,10 +158,10 @@ class OpenAITranslateMixin:
                             and not m.get("reasoning_content")):
                         m["reasoning_content"] = ""
                         fixed += 1
-                LOG_QUEUE.put_nowait(f"Thinking enabled, fixed {fixed} missing reasoning_content")
+                safe_log(f"Thinking enabled, fixed {fixed} missing reasoning_content")
                 chat["thinking"] = {"type": "enabled", "budget_tokens": 8192}
             else:
-                LOG_QUEUE.put_nowait(f"Reasoning skipped: model '{model}' does not support thinking")
+                safe_log(f"Reasoning skipped: model '{model}' does not support thinking")
         for k in ("temperature", "top_p", "frequency_penalty",
                   "presence_penalty"):
             if k in req:
@@ -492,7 +492,7 @@ class OpenAITranslateMixin:
                     "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
                 }
             })
-            LOG_QUEUE.put_nowait(f"Stream fetch failed: {detail[:500]}")
+            safe_log(f"Stream fetch failed: {detail[:500]}")
             try:
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()

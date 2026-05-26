@@ -4,7 +4,7 @@ import json as json_mod
 import hashlib
 import uuid as _uuid
 
-from .config import LOG_QUEUE
+from .config import safe_log
 
 
 class AnthropicTranslateMixin:
@@ -186,7 +186,7 @@ class AnthropicTranslateMixin:
                         m["content"].insert(0, {"type": "thinking", "thinking": ""})
                 body["thinking"] = {"type": "enabled", "budget_tokens": 8192}
             else:
-                LOG_QUEUE.put_nowait(f"Reasoning skipped: model '{model}' does not support thinking")
+                safe_log(f"Reasoning skipped: model '{model}' does not support thinking")
         tools = req.get("tools", [])
         if tools:
             anthro_tools = self._xlat_tools_anthropic(tools)
@@ -557,7 +557,7 @@ class AnthropicTranslateMixin:
                     "usage": usage_info,
                 }
             })
-            LOG_QUEUE.put_nowait(f"Stream anthropic fetch failed: {detail[:500]}")
+            safe_log(f"Stream anthropic fetch failed: {detail[:500]}")
             try:
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
