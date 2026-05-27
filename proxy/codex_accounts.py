@@ -186,6 +186,30 @@ def switch_account(account_id):
     data = _read_json_object(source)
     if not data or not _token_present(data):
         raise ValueError("Selected account auth file is missing or invalid.")
+    index = _read_index()
+    record = next((item for item in index["accounts"] if str(item.get("id") or "") == account_id), None)
+    summary = _auth_summary(data)
+    usage = None
+    if summary.get("has_chatgpt_token"):
+        try:
+            usage = _read_usage_for_auth(source)
+            data = _read_json_object(source)
+            summary = _auth_summary(data) if data else summary
+        except Exception as exc:
+            message = str(exc)
+            if "token_invalidated" in message or "401" in message or "Unauthorized" in message:
+                raise ValueError("Selected account token is invalid. Please re-login this account first.")
+            usage = {"ok": False, "message": message, "updated_at": _now()}
+    if record is not None:
+        record["account"] = summary.get("account", "")
+        record["auth_mode"] = summary.get("auth_mode", "")
+        record["last_refresh"] = summary.get("last_refresh", "")
+        record["hash"] = summary.get("hash", record.get("hash", ""))
+        record["updated_at"] = _now()
+        if usage is not None:
+            record["usage"] = usage
+            record["usage_updated_at"] = usage.get("updated_at") or _now()
+        _write_index(index)
     backup_path = _backup_file(auth_path())
     _write_json_object(auth_path(), data)
     status = list_accounts()
@@ -305,7 +329,9 @@ def _read_usage_for_auth(auth_file):
     codex_cli = _find_codex_cli()
     if not codex_cli:
         raise FileNotFoundError("Codex CLI executable was not found.")
-    with tempfile.TemporaryDirectory(prefix="ai-proxy-codex-usage-") as home:
+    home = tempfile.mkdtemp(prefix="ai-proxy-codex-usage-")
+    proc = None
+    try:
         shutil.copy2(auth_file, os.path.join(home, "auth.json"))
         env = os.environ.copy()
         env["CODEX_HOME"] = home
@@ -319,29 +345,48 @@ def _read_usage_for_auth(auth_file):
             env=env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        try:
-            _rpc_send(proc, {
-                "method": "initialize",
-                "id": 1,
-                "params": {
-                    "clientInfo": {
-                        "name": "ai_proxy_manager",
-                        "title": "AI Proxy Manager",
-                        "version": "2.5.1",
-                    }
+        _rpc_send(proc, {
+            "method": "initialize",
+            "id": 1,
+            "params": {
+                "clientInfo": {
+                    "name": "ai_proxy_manager",
+                    "title": "AI Proxy Manager",
+                    "version": "2.5.1",
                 },
-            })
-            _rpc_read_until(proc, 1, timeout=15)
-            _rpc_send(proc, {"method": "initialized", "params": {}})
-            _rpc_send(proc, {"method": "account/rateLimits/read", "id": 2})
-            result = _rpc_read_until(proc, 2, timeout=25)
-            refreshed = os.path.join(home, "auth.json")
-            if os.path.isfile(refreshed):
+                "capabilities": {},
+            },
+        })
+        _rpc_read_until(proc, 1, timeout=15)
+        _rpc_send(proc, {"method": "initialized", "params": {}})
+        _rpc_send(proc, {"method": "account/rateLimits/read", "id": 2, "params": None})
+        result = _rpc_read_until(proc, 2, timeout=25)
+        refreshed = os.path.join(home, "auth.json")
+        if os.path.isfile(refreshed):
+            refreshed_data = _read_json_object(refreshed)
+            if refreshed_data and _token_present(refreshed_data):
                 shutil.copy2(refreshed, auth_file)
-            return _normalize_usage(result)
-        finally:
+        return _normalize_usage(result)
+    finally:
+        if proc is not None:
             try:
-                proc.kill()
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=3)
+                except Exception:
+                    pass
+        for _ in range(5):
+            try:
+                shutil.rmtree(home)
+                break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            try:
+                shutil.rmtree(home, ignore_errors=True)
             except Exception:
                 pass
 
