@@ -6,7 +6,7 @@
     "main": "electron/main.cjs",
     "scripts": {
         "dev": "vite",
-        "build": "tsc -b && vite build",
+        "build": "tsc -b && vite build --config vite.config.mjs --configLoader native",
         "lint": "eslint .",
         "preview": "vite preview",
         "electron": "electron .",

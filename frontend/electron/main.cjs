@@ -1,12 +1,25 @@
 const { app, BrowserWindow, Menu } = require('electron')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 
 let mainWindow
 let backendProcess
+let backendPath
 
 const isDev = !app.isPackaged
+
+const singleInstanceLock = app.requestSingleInstanceLock()
+if (!singleInstanceLock) {
+  app.quit()
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
 
 function findBackend() {
   // Standalone exe (production)
@@ -28,6 +41,8 @@ function startBackend() {
     return
   }
   console.log(`Starting backend: ${backend.path}`)
+  backendPath = backend.path
+  cleanupStaleBackends(backend.path)
 
   if (backend.isExe) {
     backendProcess = spawn(backend.path, [], {
@@ -44,6 +59,25 @@ function startBackend() {
   backendProcess.stdout.on('data', (d) => console.log(`[Backend] ${d}`))
   backendProcess.stderr.on('data', (d) => console.error(`[Backend] ${d}`))
   backendProcess.on('close', (code) => console.log(`Backend exited: ${code}`))
+}
+
+function cleanupStaleBackends(backendPath) {
+  if (process.platform !== 'win32' || !backendPath || !fs.existsSync(backendPath)) return
+  const escapedPath = backendPath.replace(/'/g, "''")
+  const script = [
+    `$target = [System.IO.Path]::GetFullPath('${escapedPath}')`,
+    'Get-Process proxy-backend -ErrorAction SilentlyContinue | ForEach-Object {',
+    '  try {',
+    '    if ($_.Path -and ([System.IO.Path]::GetFullPath($_.Path) -eq $target)) {',
+    '      Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue',
+    '    }',
+    '  } catch {}',
+    '}',
+  ].join('; ')
+  spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    windowsHide: true,
+    stdio: 'ignore',
+  })
 }
 
 function createWindow() {
@@ -93,7 +127,6 @@ function waitForBackend(retries = 30) {
 }
 
 function stopBackend() {
-  if (!backendProcess || backendProcess.killed) return
   // Graceful stop via API first
   try {
     const req = require('http').request('http://127.0.0.1:15801/api/proxy/stop', { method: 'POST' })
@@ -101,11 +134,16 @@ function stopBackend() {
     req.write('')
     req.end()
   } catch (_) {}
-  setTimeout(() => {
-    if (backendProcess && !backendProcess.killed) {
-      backendProcess.kill()
-    }
-  }, 2000)
+  const pid = backendProcess && !backendProcess.killed ? backendProcess.pid : null
+  if (backendProcess && !backendProcess.killed) backendProcess.kill()
+  if (process.platform === 'win32' && pid) {
+    spawnSync('taskkill.exe', ['/PID', String(pid), '/F', '/T'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    })
+  }
+  cleanupStaleBackends(backendPath)
+  backendProcess = null
 }
 
 app.whenReady().then(async () => {

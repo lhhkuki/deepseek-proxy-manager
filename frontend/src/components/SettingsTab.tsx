@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CheckCircle, KeyRound, RefreshCw, Save, Settings, ShieldCheck, Shuffle, UserRound } from 'lucide-react'
+import { CheckCircle, KeyRound, PlugZap, RefreshCw, Rocket, Save, Settings, ShieldCheck, Shuffle, UserRound } from 'lucide-react'
 import * as api from '../api'
-import type { CodexConfigStatus } from '../types'
+import type { CodexConfigStatus, CodexLauncherStatus } from '../types'
 
 interface SettingsTabProps {
   port: number;
@@ -14,6 +14,7 @@ interface SettingsTabProps {
 const modeCopy = {
   official: { label: '官方账号', tone: 'text-success bg-success-soft', detail: 'Codex 将使用 ChatGPT 官方登录态' },
   proxy: { label: '第三方插件兼容', tone: 'text-accent bg-accent-soft', detail: '插件保留官方登录，模型请求走本地代理' },
+  pure_api: { label: '纯 API', tone: 'text-accent bg-accent-soft', detail: '不依赖官方登录，配合启动器注入插件入口' },
   custom: { label: '其他配置', tone: 'text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]', detail: '当前 config.toml 使用了其他 provider' },
 }
 
@@ -21,8 +22,10 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
   const [localPort, setLocalPort] = useState(port.toString())
   const [saved, setSaved] = useState(false)
   const [codex, setCodex] = useState<CodexConfigStatus | null>(null)
-  const [busy, setBusy] = useState<'official' | 'proxy' | 'refresh' | null>(null)
+  const [launcher, setLauncher] = useState<CodexLauncherStatus | null>(null)
+  const [busy, setBusy] = useState<'official' | 'proxy' | 'pure_api' | 'refresh' | 'launch' | 'relaunch' | 'inject' | 'stop' | null>(null)
   const [notice, setNotice] = useState('')
+  const [launcherNotice, setLauncherNotice] = useState('')
 
   const currentMode = useMemo(() => modeCopy[codex?.mode || 'official'], [codex])
   const modeButtonClass = (active: boolean) =>
@@ -38,6 +41,7 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
     setBusy('refresh')
     try {
       setCodex(await api.getCodexConfigStatus())
+      setLauncher(await api.getCodexLauncherStatus())
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -54,6 +58,13 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
       .catch(e => {
         if (!cancelled) setNotice(e instanceof Error ? e.message : String(e))
       })
+    api.getCodexLauncherStatus()
+      .then(status => {
+        if (!cancelled) setLauncher(status)
+      })
+      .catch(e => {
+        if (!cancelled) setLauncherNotice(e instanceof Error ? e.message : String(e))
+      })
     return () => { cancelled = true }
   }, [])
 
@@ -68,13 +79,15 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
     }
   }
 
-  const applyMode = async (mode: 'official' | 'proxy') => {
+  const applyMode = async (mode: 'official' | 'proxy' | 'pure_api') => {
     setBusy(mode)
     setNotice('')
     try {
       const result = mode === 'official'
         ? await api.applyOfficialCodexConfig()
-        : await api.applyProxyCodexConfig(parseInt(localPort) || port, activeModelId)
+        : mode === 'pure_api'
+          ? await api.applyPureApiCodexConfig(parseInt(localPort) || port, activeModelId)
+          : await api.applyProxyCodexConfig(parseInt(localPort) || port, activeModelId)
       if (result.status !== 'ok' || !result.codex) {
         throw new Error(result.message || '切换失败')
       }
@@ -86,6 +99,27 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
       setNotice((result.codex.backup_path ? `已备份：${result.codex.backup_path}` : '已写入 Codex 配置') + syncText)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const runLauncherAction = async (action: 'launch' | 'relaunch' | 'inject' | 'stop') => {
+    setBusy(action)
+    setLauncherNotice('')
+    try {
+      const result = action === 'inject'
+        ? await api.injectCodexUnlocks()
+        : action === 'stop'
+          ? await api.stopCodexProcesses()
+          : await api.launchCodexWithUnlocks(false)
+      if (result.status !== 'ok' || !result.launcher) {
+        throw new Error(result.message || 'Codex 启动器操作失败')
+      }
+      setLauncher(result.launcher)
+      setLauncherNotice(action === 'stop' ? '已关闭现有 Codex 进程' : (result.launcher.last_inject.message || 'Codex 插件增强已注入'))
+    } catch (e) {
+      setLauncherNotice(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null)
     }
@@ -142,25 +176,72 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-5">
             <StatusTile icon={<ShieldCheck className="w-4 h-4" />} label="当前模式" value={currentMode.label} detail={currentMode.detail} tone={currentMode.tone} />
-            <StatusTile icon={<UserRound className="w-4 h-4" />} label="官方登录" value={codex?.auth.authenticated ? '已登录' : '未检测到'} detail={codex?.auth.message || '正在读取 auth.json'} tone={codex?.auth.authenticated ? 'text-success bg-success-soft' : 'text-danger bg-danger-soft'} />
+            <StatusTile icon={<UserRound className="w-4 h-4" />} label="官方登录" value={codex?.auth.authenticated ? '已登录' : '未检测到'} detail={codex?.auth.message || codex?.api_auth.message || '正在读取 auth.json'} tone={codex?.auth.authenticated || codex?.api_auth.authenticated ? 'text-success bg-success-soft' : 'text-danger bg-danger-soft'} />
             <StatusTile icon={<KeyRound className="w-4 h-4" />} label="当前模型" value={activeModelId || codex?.model || '未选择'} detail={codex?.provider ? `provider: ${codex.provider}` : '将使用启用中的模型'} tone="text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]" />
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
             <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => applyMode('official')} disabled={busy !== null}
               className={modeButtonClass(codex?.mode === 'official')}>
               <span className="block text-[14px] font-semibold">切回官方账号</span>
-              <span className={modeDetailClass(codex?.mode === 'official')}>移除 AIProxyManager provider，不改 auth.json</span>
+              <span className={modeDetailClass(codex?.mode === 'official')}>移除 AIProxyManager 和纯 API Key</span>
             </motion.button>
             <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => applyMode('proxy')} disabled={busy !== null}
               className={modeButtonClass(codex?.mode === 'proxy')}>
               <span className="block text-[14px] font-semibold">启用第三方插件兼容</span>
               <span className={modeDetailClass(codex?.mode === 'proxy')}>保留官方登录态，模型请求走本地代理</span>
             </motion.button>
+            <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => applyMode('pure_api')} disabled={busy !== null}
+              className={modeButtonClass(codex?.mode === 'pure_api')}>
+              <span className="block text-[14px] font-semibold">启用纯 API</span>
+              <span className={modeDetailClass(codex?.mode === 'pure_api')}>无需官方登录，需用下方启动器打开 Codex</span>
+            </motion.button>
           </div>
 
           {notice && <p className="text-[12px] text-[var(--text-muted)] mt-4 break-all">{notice}</p>}
           <p className="text-[12px] text-[var(--text-muted)] mt-3 break-all">配置文件：{codex?.config_path || '读取中'}</p>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
+          className="bg-surface rounded-[var(--radius-sm)] border border-[var(--border)] p-6">
+          <div className="flex items-start justify-between gap-4 mb-5">
+            <div className="flex items-center gap-2">
+              <Rocket className="w-5 h-5 text-[var(--text-muted)]" />
+              <h2 className="text-[17px] font-semibold text-[var(--text-primary)]">Codex 启动器</h2>
+            </div>
+            <button type="button" onClick={refreshCodex} disabled={busy !== null}
+              className="p-2 rounded-[var(--radius-xs)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors disabled:opacity-50">
+              <RefreshCw className={`w-4 h-4 ${busy === 'refresh' ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-5">
+            <StatusTile icon={<PlugZap className="w-4 h-4" />} label="调试连接" value={launcher?.cdp_available ? '已连接' : '未连接'} detail={`端口：${launcher?.debug_port || 9231}`} tone={launcher?.cdp_available ? 'text-success bg-success-soft' : 'text-danger bg-danger-soft'} />
+            <StatusTile icon={<Rocket className="w-4 h-4" />} label="Codex 进程" value={`${launcher?.processes?.length || 0} 个`} detail={launcher?.codex_exe ? '已找到 Codex 程序' : '未找到 Codex 程序'} tone={launcher?.codex_exe ? 'text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]' : 'text-danger bg-danger-soft'} />
+            <StatusTile icon={<ShieldCheck className="w-4 h-4" />} label="插件增强" value={launcher?.last_inject.ok ? '已注入' : '未注入'} detail={launcher?.last_inject.updated_at || launcher?.last_inject.message || '等待启动器注入'} tone={launcher?.last_inject.ok ? 'text-success bg-success-soft' : 'text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]'} />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => runLauncherAction('relaunch')} disabled={busy !== null}
+              className="flex-1 px-4 py-3 rounded-[var(--radius-xs)] bg-accent text-white hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-60">
+              <span className="block text-[14px] font-semibold">启动增强版 Codex</span>
+              <span className="block text-[12px] text-white/75 mt-1">使用独立 profile，避免被已有 Codex 占用</span>
+            </motion.button>
+            <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => runLauncherAction('inject')} disabled={busy !== null || !launcher?.cdp_available}
+              className="flex-1 px-4 py-3 rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors disabled:opacity-60">
+              <span className="block text-[14px] font-semibold">重新注入增强</span>
+              <span className="block text-[12px] text-[var(--text-muted)] mt-1">Codex 已通过启动器打开时使用</span>
+            </motion.button>
+            <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => runLauncherAction('stop')} disabled={busy !== null || !launcher?.processes?.length}
+              className="flex-1 px-4 py-3 rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors disabled:opacity-60">
+              <span className="block text-[14px] font-semibold">关闭增强版 Codex</span>
+              <span className="block text-[12px] text-[var(--text-muted)] mt-1">只关闭由启动器打开的 Codex</span>
+            </motion.button>
+          </div>
+
+          {launcherNotice && <p className="text-[12px] text-[var(--text-muted)] mt-4 break-all">{launcherNotice}</p>}
+          <p className="text-[12px] text-[var(--text-muted)] mt-3 break-all">Codex 程序：{launcher?.codex_exe || '未检测到'}</p>
         </motion.div>
       </div>
     </div>

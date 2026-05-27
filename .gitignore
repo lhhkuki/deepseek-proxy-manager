@@ -20,6 +20,7 @@ proxy_icon.ico
 
 # Frontend
 frontend/node_modules/
+frontend/.tsbuild/
 frontend/dist/
 frontend/release/
 frontend/*.log

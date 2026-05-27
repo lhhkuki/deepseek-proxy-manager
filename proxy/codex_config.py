@@ -41,6 +41,19 @@ def _write_text(path, contents):
     os.replace(tmp, path)
 
 
+def _read_json_object(path):
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_json_object(path, data):
+    _write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
 def _backup_file(path):
     if not os.path.exists(path):
         return ""
@@ -257,10 +270,8 @@ def _active_model_id():
 
 def chatgpt_auth_status():
     path = auth_path()
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    data = _read_json_object(path)
+    if not data:
         return {
             "authenticated": False,
             "path": path,
@@ -298,6 +309,17 @@ def chatgpt_auth_status():
     }
 
 
+def api_key_auth_status():
+    path = auth_path()
+    data = _read_json_object(path)
+    key = str(data.get("OPENAI_API_KEY") or "").strip()
+    return {
+        "authenticated": bool(key),
+        "path": path,
+        "message": "已检测到纯 API Key" if key else "未检测到纯 API Key",
+    }
+
+
 def codex_config_status():
     path = config_path()
     contents = _read_text(path)
@@ -309,7 +331,10 @@ def codex_config_status():
         and base_url.startswith("http://127.0.0.1:")
         and requires_auth == "true"
     )
-    mode = "proxy" if is_proxy else ("official" if not provider else "custom")
+    api_auth = api_key_auth_status()
+    mode = "pure_api" if is_proxy and api_auth["authenticated"] else (
+        "proxy" if is_proxy else ("official" if not provider else "custom")
+    )
     return {
         "mode": mode,
         "provider": provider,
@@ -318,17 +343,11 @@ def codex_config_status():
         "config_path": path,
         "exists": os.path.exists(path),
         "auth": chatgpt_auth_status(),
+        "api_auth": api_auth,
     }
 
 
-def apply_proxy_config(port=None, model=None):
-    port = int(port or 15800)
-    if port < 1 or port > 65535:
-        raise ValueError("port must be between 1 and 65535")
-    model = (model or _active_model_id()).strip() or "deepseek-v4-pro"
-    path = config_path()
-    contents = _read_text(path)
-    backup_path = _backup_file(path)
+def _proxy_config_contents(contents, port, model):
     contents = _remove_table(contents, f"model_providers.{PROVIDER_ID}")
     contents = _remove_root_keys(contents, {"model_provider", "model"})
     block = "\n".join([
@@ -343,11 +362,37 @@ def apply_proxy_config(port=None, model=None):
         f"experimental_bearer_token = {_toml_quote(BEARER_TOKEN)}",
         "",
     ])
-    updated = (block + "\n" + contents).rstrip() + "\n" if contents else block
+    return (block + "\n" + contents).rstrip() + "\n" if contents else block
+
+
+def apply_proxy_config(port=None, model=None):
+    port = int(port or 15800)
+    if port < 1 or port > 65535:
+        raise ValueError("port must be between 1 and 65535")
+    model = (model or _active_model_id()).strip() or "deepseek-v4-pro"
+    path = config_path()
+    contents = _read_text(path)
+    backup_path = _backup_file(path)
+    updated = _proxy_config_contents(contents, port, model)
     _write_text(path, updated)
     status = codex_config_status()
     status["backup_path"] = backup_path
     status["conversation_sync"] = _sync_conversation_provider(PROVIDER_ID)
+    return status
+
+
+def apply_pure_api_config(port=None, model=None):
+    config_status = apply_proxy_config(port=port, model=model)
+    config_backup_path = config_status.get("backup_path", "")
+    path = auth_path()
+    auth_backup_path = _backup_file(path)
+    data = _read_json_object(path)
+    data["OPENAI_API_KEY"] = BEARER_TOKEN
+    _write_json_object(path, data)
+    status = codex_config_status()
+    status["backup_path"] = config_backup_path
+    status["auth_backup_path"] = auth_backup_path
+    status["conversation_sync"] = config_status.get("conversation_sync") or _sync_conversation_provider(PROVIDER_ID)
     return status
 
 
@@ -359,7 +404,14 @@ def apply_official_config():
     if _root_key_value(contents, "model_provider") == PROVIDER_ID:
         contents = _remove_root_keys(contents, {"model_provider", "model"})
     _write_text(path, contents + ("\n" if contents else ""))
+    data = _read_json_object(auth_path())
+    auth_backup_path = ""
+    if "OPENAI_API_KEY" in data:
+        auth_backup_path = _backup_file(auth_path())
+        data.pop("OPENAI_API_KEY", None)
+        _write_json_object(auth_path(), data)
     status = codex_config_status()
     status["backup_path"] = backup_path
+    status["auth_backup_path"] = auth_backup_path
     status["conversation_sync"] = _sync_conversation_provider(OFFICIAL_PROVIDER_ID)
     return status

@@ -1,4 +1,4 @@
-import type { CodexConfigStatus, Model } from './types'
+import type { CodexAccountsStatus, CodexConfigStatus, CodexLauncherStatus, Model } from './types'
 
 const API_BASE = 'http://127.0.0.1:15801/api'
 
@@ -99,7 +99,82 @@ export async function applyProxyCodexConfig(port: number, model?: string) {
   return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
 }
 
+export async function applyPureApiCodexConfig(port: number, model?: string) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/pure-api`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ port, model }),
+  })
+  return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
+}
+
 export async function applyOfficialCodexConfig() {
   const res = await fetchWithRetry(`${API_BASE}/codex-config/official`, { method: 'POST' })
   return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
+}
+
+export async function getCodexLauncherStatus() {
+  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/status`)
+  return res.json() as Promise<CodexLauncherStatus>
+}
+
+export async function launchCodexWithUnlocks(terminateExisting = false) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/launch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ terminate_existing: terminateExisting }),
+  })
+  return res.json() as Promise<{ status: string; message?: string; launcher?: CodexLauncherStatus }>
+}
+
+export async function stopCodexProcesses() {
+  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/stop`, { method: 'POST' })
+  return res.json() as Promise<{ status: string; message?: string; launcher?: CodexLauncherStatus }>
+}
+
+export async function injectCodexUnlocks() {
+  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/inject`, { method: 'POST' })
+  return res.json() as Promise<{ status: string; message?: string; launcher?: CodexLauncherStatus }>
+}
+
+export async function getCodexAccounts() {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts`)
+  return res.json() as Promise<CodexAccountsStatus>
+}
+
+export async function importCurrentCodexAccount(alias?: string) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/import-current`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alias }),
+  })
+  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+}
+
+export async function refreshCodexAccountUsage(accountId?: string) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/refresh-usage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account_id: accountId }),
+  })
+  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+}
+
+export async function switchCodexAccount(accountId: string) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}/switch`, { method: 'POST' })
+  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+}
+
+export async function renameCodexAccount(accountId: string, alias: string) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alias }),
+  })
+  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+}
+
+export async function deleteCodexAccount(accountId: string) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}`, { method: 'DELETE' })
+  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
 }

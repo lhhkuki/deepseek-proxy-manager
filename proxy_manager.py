@@ -11,7 +11,7 @@ import threading
 import time
 from proxy.config import (
     CONFIG_PATH, DEFAULT_CONFIG, save_config, load_config,
-    write_pid_file, remove_pid_file,
+    remove_pid_file,
 )
 from proxy.server import ProxyServer
 from proxy.handler import ProxyHandler
@@ -21,25 +21,12 @@ def main():
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     if not os.path.exists(CONFIG_PATH):
         save_config(DEFAULT_CONFIG)
-    from proxy.config import cleanup_port
-
     cfg = load_config()
-    port = cfg.get("port", 15800)
+    print(f"Proxy configured on http://127.0.0.1:{cfg.get('port', 15800)}; waiting for UI start.")
 
-    # Kill any zombie process from a previous run
-    cleanup_port(port)
-
-    # Start proxy server
+    # Create the proxy instance, but do not start it automatically.
+    # The Electron UI controls start/stop through /api/proxy/start.
     proxy = ProxyServer(ProxyHandler)
-    try:
-        proxy.start(port)
-        print(f"Proxy started on http://127.0.0.1:{port}")
-    except Exception as e:
-        print(f"Failed to start proxy: {e}")
-        sys.exit(1)
-
-    # Write PID file after successful start
-    write_pid_file()
     atexit.register(proxy.stop)
     atexit.register(remove_pid_file)
 

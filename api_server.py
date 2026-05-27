@@ -24,7 +24,22 @@ from proxy.handler import ProxyHandler
 from proxy.codex_config import (
     codex_config_status,
     apply_proxy_config,
+    apply_pure_api_config,
     apply_official_config,
+)
+from proxy.codex_launcher import (
+    launcher_status,
+    launch_and_inject,
+    inject_unlock_script,
+    stop_launched_codex,
+)
+from proxy.codex_accounts import (
+    list_accounts,
+    import_current_account,
+    switch_account,
+    rename_account,
+    delete_account,
+    refresh_account_usage,
 )
 
 app = Flask(__name__)
@@ -242,6 +257,20 @@ def use_proxy_codex_config():
         return jsonify({"status": "error", "message": str(e)}), 400
 
 
+@app.route('/api/codex-config/pure-api', methods=['POST'])
+def use_pure_api_codex_config():
+    body = request.json if isinstance(request.json, dict) else {}
+    cfg = load_config()
+    try:
+        status = apply_pure_api_config(
+            port=body.get("port") or cfg.get("port", 15800),
+            model=body.get("model"),
+        )
+        return jsonify({"status": "ok", "codex": status})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+
 @app.route('/api/codex-config/official', methods=['POST'])
 def use_official_codex_config():
     try:
@@ -251,22 +280,102 @@ def use_official_codex_config():
         return jsonify({"status": "error", "message": str(e)}), 400
 
 
+@app.route('/api/codex-launcher/status', methods=['GET'])
+def get_codex_launcher_status():
+    return jsonify(launcher_status())
+
+
+@app.route('/api/codex-launcher/launch', methods=['POST'])
+def launch_codex_with_unlocks():
+    body = request.json if isinstance(request.json, dict) else {}
+    try:
+        return jsonify({
+            "status": "ok",
+            "launcher": launch_and_inject(terminate_existing=bool(body.get("terminate_existing"))),
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "launcher": launcher_status()}), 400
+
+
+@app.route('/api/codex-launcher/stop', methods=['POST'])
+def stop_codex_processes():
+    try:
+        killed = stop_launched_codex()
+        status = launcher_status()
+        status["killed"] = killed
+        return jsonify({"status": "ok", "launcher": status})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "launcher": launcher_status()}), 400
+
+
+@app.route('/api/codex-launcher/inject', methods=['POST'])
+def inject_codex_unlocks():
+    try:
+        inject = inject_unlock_script()
+        status = launcher_status()
+        status["last_inject"] = inject
+        return jsonify({"status": "ok", "launcher": status})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "launcher": launcher_status()}), 400
+
+
+@app.route('/api/codex-accounts', methods=['GET'])
+def get_codex_accounts():
+    return jsonify(list_accounts())
+
+
+@app.route('/api/codex-accounts/import-current', methods=['POST'])
+def import_current_codex_account():
+    body = request.json if isinstance(request.json, dict) else {}
+    try:
+        return jsonify({"status": "ok", "accounts": import_current_account(body.get("alias"))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
+
+
+@app.route('/api/codex-accounts/refresh-usage', methods=['POST'])
+def refresh_codex_account_usage():
+    body = request.json if isinstance(request.json, dict) else {}
+    account_id = body.get("account_id")
+    try:
+        return jsonify({"status": "ok", "accounts": refresh_account_usage(account_id)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
+
+
+@app.route('/api/codex-accounts/<account_id>/switch', methods=['POST'])
+def switch_codex_account(account_id):
+    try:
+        return jsonify({"status": "ok", "accounts": switch_account(account_id)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
+
+
+@app.route('/api/codex-accounts/<account_id>', methods=['PATCH'])
+def rename_codex_account(account_id):
+    body = request.json if isinstance(request.json, dict) else {}
+    try:
+        return jsonify({"status": "ok", "accounts": rename_account(account_id, body.get("alias"))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
+
+
+@app.route('/api/codex-accounts/<account_id>', methods=['DELETE'])
+def delete_codex_account(account_id):
+    try:
+        return jsonify({"status": "ok", "accounts": delete_account(account_id)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
+
+
 def run_api(port=15801):
     app.run(host="127.0.0.1", port=port, threaded=True, debug=False)
 
 
 if __name__ == "__main__":
-    # Start proxy server
     cfg = load_config()
     port = cfg.get("port", 15800)
     proxy = ProxyServer(ProxyHandler)
-    try:
-        proxy.start(port)
-        write_pid_file()
-        set_proxy_instance(proxy)
-        print(f"Proxy started on port {port}")
-    except Exception as e:
-        print(f"Proxy start failed: {e}")
-
-    # Start API (blocking)
+    set_proxy_instance(proxy)
+    print(f"Proxy configured on port {port}; waiting for /api/proxy/start")
     run_api()

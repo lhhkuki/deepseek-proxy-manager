@@ -5,12 +5,14 @@ import TabBar from './components/TabBar'
 import ModelsTab from './components/ModelsTab'
 import LogsTab from './components/LogsTab'
 import SettingsTab from './components/SettingsTab'
+import AccountsTab from './components/AccountsTab'
 import ModelDialog from './components/ModelDialog'
 import * as api from './api'
 import type { Model, LogEntry } from './types'
 
 const TABS = [
   { id: 'models', label: '模型' },
+  { id: 'accounts', label: '账号' },
   { id: 'logs', label: '日志' },
   { id: 'settings', label: '设置' },
 ]
@@ -182,6 +184,18 @@ function App() {
               className="h-full"
             >
               <LogsTab logs={logs} />
+            </motion.div>
+          )}
+          {activeTab === 'accounts' && (
+            <motion.div
+              key="accounts"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              className="h-full"
+            >
+              <AccountsTab />
             </motion.div>
           )}
           {activeTab === 'settings' && (
