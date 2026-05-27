@@ -367,8 +367,10 @@ def _read_usage_for_auth(auth_file):
         })
         _rpc_read_until(proc, 1, timeout=15)
         _rpc_send(proc, {"method": "initialized", "params": {}})
-        _rpc_send(proc, {"method": "account/rateLimits/read", "id": 2, "params": None})
-        result = _rpc_read_until(proc, 2, timeout=25)
+        _rpc_send(proc, {"method": "account/read", "id": 2, "params": {"refreshToken": True}})
+        _rpc_read_until(proc, 2, timeout=25)
+        _rpc_send(proc, {"method": "account/rateLimits/read", "id": 3, "params": None})
+        result = _rpc_read_until(proc, 3, timeout=25)
         refreshed = os.path.join(home, "auth.json")
         if os.path.isfile(refreshed):
             refreshed_data = _read_json_object(refreshed)
