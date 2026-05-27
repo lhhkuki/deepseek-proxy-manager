@@ -112,7 +112,7 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
         ? await api.injectCodexUnlocks()
         : action === 'stop'
           ? await api.stopCodexProcesses()
-          : await api.launchCodexWithUnlocks(false)
+          : await api.launchCodexWithUnlocks(action === 'relaunch')
       if (result.status !== 'ok' || !result.launcher) {
         throw new Error(result.message || 'Codex 启动器操作失败')
       }

@@ -218,8 +218,11 @@ def _powershell_windowsapps_codex_paths():
     script = (
         "$pkg = Get-AppxPackage OpenAI.Codex -ErrorAction SilentlyContinue | "
         "Sort-Object Version -Descending | Select-Object -First 1; "
-        "if ($pkg) { $p = Join-Path $pkg.InstallLocation 'Codex.exe'; "
-        "if (Test-Path $p) { $p } }; "
+        "if ($pkg) { "
+        "$p1 = Join-Path $pkg.InstallLocation 'app\\Codex.exe'; "
+        "$p2 = Join-Path $pkg.InstallLocation 'Codex.exe'; "
+        "if (Test-Path $p1) { $p1 } elseif (Test-Path $p2) { $p2 } "
+        "}; "
         "Get-ChildItem 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_*\\app\\Codex.exe' "
         "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName"
     )
@@ -251,7 +254,11 @@ def _windows_apps_roots():
 def _codex_path_rank(path):
     normalized = path.lower().replace("/", "\\")
     if "\\windowsapps\\openai.codex_" in normalized and normalized.endswith("\\app\\codex.exe"):
-        return 2
+        return 4
+    if os.path.basename(path).lower() == "codex.exe" and os.path.isfile(os.path.join(os.path.dirname(path), "resources", "app.asar")):
+        return 3
+    if "\\app\\resources\\codex.exe" in normalized:
+        return 1
     return 1
 
 
