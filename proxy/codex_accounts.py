@@ -65,6 +65,17 @@ def _token_present(data):
     return isinstance(tokens, dict) and any(str(tokens.get(key) or "").strip() for key in ("access_token", "id_token", "refresh_token"))
 
 
+def _usage_error_message(exc):
+    message = str(exc)
+    if "token_invalidated" in message or "401" in message or "Unauthorized" in message:
+        return "额度读取失败：账号登录已失效，请重新登录后再导入。"
+    if "Timed out" in message or "timeout" in message.lower():
+        return "额度读取超时，请稍后重试。"
+    if "Codex CLI executable was not found" in message:
+        return "未找到 Codex 程序，无法读取额度。"
+    return message[:240]
+
+
 def _extract_email(data):
     tokens = data.get("tokens") if isinstance(data, dict) else {}
     candidates = []
@@ -196,10 +207,7 @@ def switch_account(account_id):
             data = _read_json_object(source)
             summary = _auth_summary(data) if data else summary
         except Exception as exc:
-            message = str(exc)
-            if "token_invalidated" in message or "401" in message or "Unauthorized" in message:
-                raise ValueError("Selected account token is invalid. Please re-login this account first.")
-            usage = {"ok": False, "message": message, "updated_at": _now()}
+            usage = {"ok": False, "message": _usage_error_message(exc), "updated_at": _now()}
     if record is not None:
         record["account"] = summary.get("account", "")
         record["auth_mode"] = summary.get("auth_mode", "")
@@ -402,7 +410,7 @@ def refresh_account_usage(account_id=None):
         try:
             usage = _read_usage_for_auth(_account_file(account_id))
         except Exception as exc:
-            usage = {"ok": False, "message": str(exc), "updated_at": now}
+            usage = {"ok": False, "message": _usage_error_message(exc), "updated_at": now}
         item["usage"] = usage
         item["usage_updated_at"] = now
     _write_index(index)
