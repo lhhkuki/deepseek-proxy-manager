@@ -78,6 +78,16 @@ def _usage_error_message(exc):
     return message[:240]
 
 
+def _is_invalid_auth_error(message):
+    message = str(message or "").lower()
+    return (
+        "token_invalidated" in message
+        or "401" in message
+        or "unauthorized" in message
+        or "登录已失效" in message
+    )
+
+
 def _extract_email(data):
     tokens = data.get("tokens") if isinstance(data, dict) else {}
     candidates = []
@@ -155,7 +165,7 @@ def list_accounts():
     }
 
 
-def import_current_account(alias=None):
+def import_current_account():
     data = _read_json_object(auth_path())
     if not data or not _token_present(data):
         raise ValueError("Current Codex auth.json has no usable account token.")
@@ -166,7 +176,7 @@ def import_current_account(alias=None):
     now = _now()
     existing = next((item for item in index["accounts"] if item.get("hash") == account_hash), None)
     if existing:
-        existing["alias"] = _safe_alias(alias or existing.get("alias") or summary.get("account"))
+        existing["alias"] = _safe_alias(summary.get("account") or existing.get("alias"))
         existing["updated_at"] = now
         existing["account"] = summary.get("account", "")
         existing["auth_mode"] = summary.get("auth_mode", "")
@@ -176,7 +186,7 @@ def import_current_account(alias=None):
         account_id = uuid.uuid4().hex[:12]
         index["accounts"].append({
             "id": account_id,
-            "alias": _safe_alias(alias or summary.get("account") or "Codex account"),
+            "alias": _safe_alias(summary.get("account") or "Codex account"),
             "account": summary.get("account", ""),
             "auth_mode": summary.get("auth_mode", ""),
             "last_refresh": summary.get("last_refresh", ""),
@@ -187,6 +197,25 @@ def import_current_account(alias=None):
 
     os.makedirs(os.path.dirname(_account_file(account_id)), exist_ok=True)
     _write_json_object(_account_file(account_id), data)
+    usage = None
+    if summary.get("has_chatgpt_token"):
+        try:
+            usage = _read_usage_for_auth(_account_file(account_id))
+            data = _read_json_object(_account_file(account_id))
+            summary = _auth_summary(data) if data else summary
+        except Exception as exc:
+            usage = {"ok": False, "message": _usage_error_message(exc), "updated_at": now}
+    record = next((item for item in index["accounts"] if str(item.get("id") or "") == account_id), None)
+    if record is not None:
+        record["alias"] = _safe_alias(summary.get("account") or record.get("alias"))
+        record["account"] = summary.get("account", "")
+        record["auth_mode"] = summary.get("auth_mode", "")
+        record["last_refresh"] = summary.get("last_refresh", "")
+        record["hash"] = summary.get("hash", record.get("hash", ""))
+        record["updated_at"] = now
+        if usage is not None:
+            record["usage"] = usage
+            record["usage_updated_at"] = usage.get("updated_at") or now
     _write_index(index)
     return list_accounts()
 
@@ -201,6 +230,11 @@ def switch_account(account_id):
         raise ValueError("Selected account auth file is missing or invalid.")
     index = _read_index()
     record = next((item for item in index["accounts"] if str(item.get("id") or "") == account_id), None)
+    saved_usage = record.get("usage") if isinstance(record, dict) else None
+    if isinstance(saved_usage, dict) and saved_usage.get("ok") is False:
+        saved_message = str(saved_usage.get("message") or "")
+        if _is_invalid_auth_error(saved_message):
+            raise ValueError("选中的账号登录已失效。请先在 Codex 里重新登录这个账号，然后重新导入。")
     summary = _auth_summary(data)
     usage = None
     if summary.get("has_chatgpt_token"):
@@ -209,6 +243,8 @@ def switch_account(account_id):
             data = _read_json_object(source)
             summary = _auth_summary(data) if data else summary
         except Exception as exc:
+            if _is_invalid_auth_error(str(exc)):
+                raise ValueError("选中的账号登录已失效。请先在 Codex 里重新登录这个账号，然后重新导入。") from exc
             usage = {"ok": False, "message": _usage_error_message(exc), "updated_at": _now()}
     if record is not None:
         record["account"] = summary.get("account", "")
@@ -225,18 +261,6 @@ def switch_account(account_id):
     status = list_accounts()
     status["backup_path"] = backup_path
     return status
-
-
-def rename_account(account_id, alias):
-    account_id = str(account_id or "").strip()
-    index = _read_index()
-    for item in index["accounts"]:
-        if item.get("id") == account_id:
-            item["alias"] = _safe_alias(alias)
-            item["updated_at"] = _now()
-            _write_index(index)
-            return list_accounts()
-    raise ValueError("Account was not found.")
 
 
 def delete_account(account_id):
@@ -325,6 +349,61 @@ def _rpc_read_until(proc, response_id, timeout=20):
     raise TimeoutError("Timed out waiting for Codex app-server rate limit response.")
 
 
+def _copy_refreshed_auth(home, auth_file):
+    refreshed = os.path.join(home, "auth.json")
+    if os.path.isfile(refreshed):
+        refreshed_data = _read_json_object(refreshed)
+        if refreshed_data and _token_present(refreshed_data):
+            shutil.copy2(refreshed, auth_file)
+            return True
+    return False
+
+
+def _store_account_identity(home, account_read_result):
+    account = account_read_result.get("account") if isinstance(account_read_result, dict) else None
+    if not isinstance(account, dict):
+        return
+    email = str(account.get("email") or "").strip()
+    account_id = str(account.get("accountId") or account.get("id") or "").strip()
+    plan_type = str(account.get("planType") or "").strip()
+    if not email and not account_id and not plan_type:
+        return
+    path = os.path.join(home, "auth.json")
+    data = _read_json_object(path)
+    if not data:
+        return
+    tokens = data.get("tokens")
+    if not isinstance(tokens, dict):
+        tokens = {}
+        data["tokens"] = tokens
+    if email:
+        data["email"] = email
+        data["account_email"] = email
+        tokens["email"] = email
+    if account_id:
+        data["account_id"] = account_id
+        tokens["account_id"] = account_id
+    if plan_type:
+        data["plan_type"] = plan_type
+        tokens["plan_type"] = plan_type
+    _write_json_object(path, data)
+
+
+def _read_rate_limits_with_retries(proc, attempts=3):
+    last_exc = None
+    for attempt in range(attempts):
+        response_id = 3 + attempt
+        _rpc_send(proc, {"method": "account/rateLimits/read", "id": response_id, "params": None})
+        try:
+            return _rpc_read_until(proc, response_id, timeout=25)
+        except Exception as exc:
+            last_exc = exc
+            if _is_invalid_auth_error(str(exc)) or attempt == attempts - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    raise last_exc or RuntimeError("Failed to read Codex rate limits.")
+
+
 def _normalize_usage(payload):
     rate_limits = payload.get("rateLimitsByLimitId", {}).get("codex") if isinstance(payload.get("rateLimitsByLimitId"), dict) else None
     if not isinstance(rate_limits, dict):
@@ -388,7 +467,7 @@ def _read_usage_for_auth(auth_file):
                 "clientInfo": {
                     "name": "ai_proxy_manager",
                     "title": "AI Proxy Manager",
-                    "version": "2.5.1",
+                    "version": "2.5.2",
                 },
                 "capabilities": {},
             },
@@ -396,14 +475,11 @@ def _read_usage_for_auth(auth_file):
         _rpc_read_until(proc, 1, timeout=15)
         _rpc_send(proc, {"method": "initialized", "params": {}})
         _rpc_send(proc, {"method": "account/read", "id": 2, "params": {"refreshToken": True}})
-        _rpc_read_until(proc, 2, timeout=25)
-        _rpc_send(proc, {"method": "account/rateLimits/read", "id": 3, "params": None})
-        result = _rpc_read_until(proc, 3, timeout=25)
-        refreshed = os.path.join(home, "auth.json")
-        if os.path.isfile(refreshed):
-            refreshed_data = _read_json_object(refreshed)
-            if refreshed_data and _token_present(refreshed_data):
-                shutil.copy2(refreshed, auth_file)
+        account_result = _rpc_read_until(proc, 2, timeout=25)
+        _store_account_identity(home, account_result)
+        _copy_refreshed_auth(home, auth_file)
+        result = _read_rate_limits_with_retries(proc)
+        _copy_refreshed_auth(home, auth_file)
         return _normalize_usage(result)
     finally:
         if proc is not None:
@@ -439,8 +515,18 @@ def refresh_account_usage(account_id=None):
             continue
         try:
             usage = _read_usage_for_auth(_account_file(account_id))
+            auth_data = _read_json_object(_account_file(account_id))
+            summary = _auth_summary(auth_data) if auth_data else {}
         except Exception as exc:
             usage = {"ok": False, "message": _usage_error_message(exc), "updated_at": now}
+            summary = {}
+        if summary:
+            item["alias"] = _safe_alias(summary.get("account") or item.get("alias"))
+            item["account"] = summary.get("account", "")
+            item["auth_mode"] = summary.get("auth_mode", "")
+            item["last_refresh"] = summary.get("last_refresh", "")
+            item["hash"] = summary.get("hash", item.get("hash", ""))
+            item["updated_at"] = now
         item["usage"] = usage
         item["usage_updated_at"] = now
     _write_index(index)

@@ -40,7 +40,6 @@ from proxy.codex_accounts import (
     list_accounts,
     import_current_account,
     switch_account,
-    rename_account,
     delete_account,
     refresh_account_usage,
 )
@@ -406,9 +405,8 @@ def get_codex_accounts():
 
 @app.route('/api/codex-accounts/import-current', methods=['POST'])
 def import_current_codex_account():
-    body = request.json if isinstance(request.json, dict) else {}
     try:
-        return jsonify({"status": "ok", "accounts": import_current_account(body.get("alias"))})
+        return jsonify({"status": "ok", "accounts": import_current_account()})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
 
@@ -427,15 +425,6 @@ def refresh_codex_account_usage():
 def switch_codex_account(account_id):
     try:
         return jsonify({"status": "ok", "accounts": switch_account(account_id)})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
-
-
-@app.route('/api/codex-accounts/<account_id>', methods=['PATCH'])
-def rename_codex_account(account_id):
-    body = request.json if isinstance(request.json, dict) else {}
-    try:
-        return jsonify({"status": "ok", "accounts": rename_account(account_id, body.get("alias"))})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e), "accounts": list_accounts()}), 400
 

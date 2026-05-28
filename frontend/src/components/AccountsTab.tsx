@@ -11,16 +11,18 @@ type BusyState =
   | 'import'
   | `usage:${string}`
   | `switch:${string}`
-  | `rename:${string}`
   | `delete:${string}`
   | null
+
+function accountName(account?: CodexAccount | null) {
+  if (!account) return ''
+  return account.account || account.alias || account.id
+}
 
 export default function AccountsTab() {
   const [status, setStatus] = useState<CodexAccountsStatus | null>(null)
   const [busy, setBusy] = useState<BusyState>(null)
   const [notice, setNotice] = useState('')
-  const [alias, setAlias] = useState('')
-  const [editing, setEditing] = useState<Record<string, string>>({})
 
   const activeAccount = useMemo(() => status?.accounts.find(account => account.active) || null, [status])
 
@@ -59,9 +61,9 @@ export default function AccountsTab() {
   const importCurrent = async () => {
     setBusy('import')
     try {
-      const next = applyResult(await api.importCurrentCodexAccount(alias), '导入当前账号失败')
-      setAlias('')
-      setNotice(`已保存当前账号，共 ${next.accounts.length} 个账号`)
+      const next = applyResult(await api.importCurrentCodexAccount(), '导入当前账号失败')
+      const current = next.accounts.find(account => account.active)
+      setNotice(current ? `已保存当前账号：${accountName(current)}` : `已保存当前账号，共 ${next.accounts.length} 个账号`)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -73,7 +75,7 @@ export default function AccountsTab() {
     setBusy(account ? `usage:${account.id}` : 'usage:all')
     try {
       const next = applyResult(await api.refreshCodexAccountUsage(account?.id), '刷新额度失败')
-      setNotice(account ? `已刷新「${account.alias}」额度` : `已刷新 ${next.accounts.length} 个账号额度`)
+      setNotice(account ? `已刷新 ${accountName(account)} 的额度` : `已刷新 ${next.accounts.length} 个账号额度`)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -85,22 +87,7 @@ export default function AccountsTab() {
     setBusy(`switch:${account.id}`)
     try {
       const next = applyResult(await api.switchCodexAccount(account.id), '切换账号失败')
-      setNotice(next.backup_path ? `已切换账号；原 auth 已备份：${next.backup_path}` : '已切换账号')
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const renameAccount = async (account: CodexAccount) => {
-    const nextAlias = editing[account.id]?.trim()
-    if (!nextAlias) return
-    setBusy(`rename:${account.id}`)
-    try {
-      applyResult(await api.renameCodexAccount(account.id, nextAlias), '重命名账号失败')
-      setEditing(prev => ({ ...prev, [account.id]: '' }))
-      setNotice('已重命名账号')
+      setNotice(next.backup_path ? `已切换账号，原 auth 已备份：${next.backup_path}` : `已切换账号：${accountName(account)}`)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -109,7 +96,7 @@ export default function AccountsTab() {
   }
 
   const deleteAccount = async (account: CodexAccount) => {
-    if (!confirm(`确定删除账号「${account.alias}」吗？这只会删除本工具保存的副本。`)) return
+    if (!confirm(`确定删除账号「${accountName(account)}」吗？这只会删除本工具保存的副本。`)) return
     setBusy(`delete:${account.id}`)
     try {
       applyResult(await api.deleteCodexAccount(account.id), '删除账号失败')
@@ -149,19 +136,15 @@ export default function AccountsTab() {
             <StatusTile icon={<UserRound className="w-4 h-4" />} label="当前 auth" value={status?.current.exists ? (status.current.account || '已检测') : '未检测到'}
               detail={status?.current.auth_mode || status?.auth_path || '正在读取 Codex auth.json'} tone={status?.current.exists ? 'text-success bg-success-soft' : 'text-danger bg-danger-soft'} />
             <StatusTile icon={<WalletCards className="w-4 h-4" />} label="保存账号" value={`${status?.accounts.length || 0} 个`}
-              detail={activeAccount ? `当前：${activeAccount.alias}` : '尚未匹配到已保存账号'} tone="text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]" />
+              detail={activeAccount ? `当前：${accountName(activeAccount)}` : '尚未匹配到已保存账号'} tone="text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]" />
             <StatusTile icon={<ShieldCheck className="w-4 h-4" />} label="存储位置" value="本地保险箱"
               detail={status?.vault_path || '读取中'} tone="text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]" />
           </div>
 
-          <div className="flex flex-col md:flex-row gap-3">
-            <input value={alias} onChange={e => setAlias(e.target.value)} placeholder="账号备注，例如：官方主号"
-              className="flex-1 px-4 py-2.5 bg-[var(--bg-primary)] border border-[var(--border)] rounded-[var(--radius-xs)] text-[var(--text-primary)] text-[14px] outline-none transition-all duration-200 focus:border-accent focus:ring-1 focus:ring-accent/20" />
-            <button type="button" onClick={importCurrent} disabled={busy !== null || !status?.current.exists}
-              className="px-5 py-2.5 bg-accent text-white text-[13px] font-semibold rounded-[var(--radius-xs)] hover:bg-blue-700 transition-colors duration-200 shadow-sm disabled:opacity-60">
-              保存当前 Codex 账号
-            </button>
-          </div>
+          <button type="button" onClick={importCurrent} disabled={busy !== null || !status?.current.exists}
+            className="px-5 py-2.5 bg-accent text-white text-[13px] font-semibold rounded-[var(--radius-xs)] hover:bg-blue-700 transition-colors duration-200 shadow-sm disabled:opacity-60">
+            保存当前 Codex 账号
+          </button>
           {notice && <p className="text-[12px] text-[var(--text-muted)] mt-4 break-all">{notice}</p>}
         </motion.div>
 
@@ -173,10 +156,10 @@ export default function AccountsTab() {
               <div className="flex items-start justify-between gap-3 mb-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-[15px] font-semibold text-[var(--text-primary)] truncate">{account.alias}</h3>
+                    <h3 className="text-[15px] font-semibold text-[var(--text-primary)] truncate">{accountName(account)}</h3>
                     {account.active && <span className="inline-flex items-center gap-1 text-[12px] text-success"><CheckCircle className="w-3.5 h-3.5" />当前</span>}
                   </div>
-                  <p className="text-[12px] text-[var(--text-muted)] mt-1 truncate">{account.account || account.auth_mode || account.id}</p>
+                  <p className="text-[12px] text-[var(--text-muted)] mt-1 truncate">{account.auth_mode || account.id}</p>
                 </div>
                 <div className="flex items-center gap-1">
                   <button type="button" onClick={() => refreshUsage(account)} disabled={busy !== null}
@@ -195,21 +178,13 @@ export default function AccountsTab() {
 
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <MiniStat label="类型" value={account.has_chatgpt_token ? 'ChatGPT' : account.has_api_key ? 'API Key' : account.auth_mode || '未知'} icon={<KeyRound className="w-3.5 h-3.5" />} />
-                <MiniStat label="更新时间" value={account.updated_at || account.created_at || '-'} icon={<RefreshCw className="w-3.5 h-3.5" />} />
+                <MiniStat label="保存时间" value={account.updated_at || account.created_at || '-'} icon={<RefreshCw className="w-3.5 h-3.5" />} />
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input value={editing[account.id] ?? ''} onChange={e => setEditing(prev => ({ ...prev, [account.id]: e.target.value }))}
-                  placeholder="新备注" className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-[var(--radius-xs)] text-[13px] text-[var(--text-primary)] outline-none focus:border-accent" />
-                <button type="button" onClick={() => renameAccount(account)} disabled={busy !== null || !editing[account.id]?.trim()}
-                  className="px-4 py-2 border border-[var(--border)] bg-[var(--bg-primary)] text-[13px] text-[var(--text-primary)] rounded-[var(--radius-xs)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-50">
-                  重命名
-                </button>
-                <button type="button" onClick={() => switchAccount(account)} disabled={busy !== null || account.active}
-                  className="px-4 py-2 bg-accent text-white text-[13px] font-semibold rounded-[var(--radius-xs)] hover:bg-blue-700 disabled:opacity-60">
-                  切换
-                </button>
-              </div>
+              <button type="button" onClick={() => switchAccount(account)} disabled={busy !== null || account.active}
+                className="w-full px-4 py-2 bg-accent text-white text-[13px] font-semibold rounded-[var(--radius-xs)] hover:bg-blue-700 disabled:opacity-60">
+                切换
+              </button>
             </motion.div>
           ))}
         </div>
@@ -220,7 +195,7 @@ export default function AccountsTab() {
 
 function UsagePanel({ account }: { account: CodexAccount }) {
   const usage = account.usage
-  const message = usage && !usage.ok ? usage.message : usage?.updated_at ? `刷新于 ${usage.updated_at}` : '点击仪表盘按钮刷新'
+  const message = usage && !usage.ok ? usage.message : usage?.updated_at ? `额度刷新于 ${usage.updated_at}` : '点击仪表盘按钮刷新'
 
   return (
     <div className="rounded-[var(--radius-xs)] border border-[var(--border)] bg-[var(--bg-primary)] p-3 mb-4">
@@ -232,7 +207,7 @@ function UsagePanel({ account }: { account: CodexAccount }) {
         {usage?.plan_type && <span className="text-[11px] text-[var(--text-muted)]">{usage.plan_type}</span>}
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <QuotaStat label="五小时" window={usage?.primary} icon={<Clock3 className="w-3.5 h-3.5" />} />
+        <QuotaStat label="五小时额度" window={usage?.primary} icon={<Clock3 className="w-3.5 h-3.5" />} />
         <QuotaStat label="周额度" window={usage?.secondary} icon={<CalendarDays className="w-3.5 h-3.5" />} />
       </div>
       <div className={`text-[11px] mt-3 truncate ${usage && !usage.ok ? 'text-danger' : 'text-[var(--text-muted)]'}`}>{message}</div>
@@ -240,11 +215,22 @@ function UsagePanel({ account }: { account: CodexAccount }) {
   )
 }
 
+function formatResetTime(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '刷新时间 -'
+  const raw = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(raw)) return '刷新时间 -'
+  const millis = raw > 10_000_000_000 ? raw : raw * 1000
+  const date = new Date(millis)
+  if (Number.isNaN(date.getTime())) return '刷新时间 -'
+  return `刷新 ${date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}`
+}
+
 function QuotaStat({ icon, label, window }: { icon: ReactNode; label: string; window?: CodexQuotaWindow | null }) {
   const used = typeof window?.used_percent === 'number' ? window.used_percent : null
   const remaining = typeof window?.remaining_percent === 'number' ? window.remaining_percent : null
   const value = remaining === null ? '未刷新' : `剩余 ${Math.round(remaining)}%`
   const detail = used === null ? '等待读取' : `已用 ${Math.round(used)}%`
+  const resetText = formatResetTime(window?.resets_at)
   const bar = used === null ? 0 : Math.max(0, Math.min(100, used))
 
   return (
@@ -257,6 +243,7 @@ function QuotaStat({ icon, label, window }: { icon: ReactNode; label: string; wi
       <div className="h-1.5 rounded-full bg-[var(--bg-surface-hover)] mt-2 overflow-hidden">
         <div className="h-full rounded-full bg-accent transition-all duration-300" style={{ width: `${bar}%` }} />
       </div>
+      <div className="text-[11px] text-[var(--text-muted)] mt-1 truncate">{resetText}</div>
     </div>
   )
 }

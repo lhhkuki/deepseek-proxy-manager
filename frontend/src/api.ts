@@ -163,11 +163,11 @@ export async function getCodexAccounts() {
   return readJson<CodexAccountsStatus>(res)
 }
 
-export async function importCurrentCodexAccount(alias?: string) {
+export async function importCurrentCodexAccount() {
   const res = await fetchWithRetry(`${API_BASE}/codex-accounts/import-current`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ alias }),
+    body: JSON.stringify({}),
   }))
   return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
 }
@@ -183,15 +183,6 @@ export async function refreshCodexAccountUsage(accountId?: string) {
 
 export async function switchCodexAccount(accountId: string) {
   const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}/switch`, withLocalHeader({ method: 'POST' }))
-  return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
-}
-
-export async function renameCodexAccount(accountId: string, alias: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}`, withLocalHeader({
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ alias }),
-  }))
   return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
 }
 
