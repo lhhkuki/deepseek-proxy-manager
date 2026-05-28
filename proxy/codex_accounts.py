@@ -3,10 +3,12 @@
 import hashlib
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 
@@ -276,14 +278,40 @@ def _rpc_send(proc, payload):
     proc.stdin.flush()
 
 
+def _rpc_stdout_queue(proc):
+    q = getattr(proc, "_ai_proxy_stdout_queue", None)
+    if q is not None:
+        return q
+    q = queue.Queue()
+
+    def read_stdout():
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                q.put(None)
+                break
+            q.put(line)
+
+    thread = threading.Thread(target=read_stdout, daemon=True)
+    thread.start()
+    proc._ai_proxy_stdout_queue = q
+    return q
+
+
 def _rpc_read_until(proc, response_id, timeout=20):
     deadline = time.time() + timeout
+    q = _rpc_stdout_queue(proc)
     while time.time() < deadline:
-        line = proc.stdout.readline()
+        remaining = max(0.05, deadline - time.time())
+        try:
+            line = q.get(timeout=min(0.2, remaining))
+        except queue.Empty:
+            if proc.poll() is not None:
+                break
+            continue
         if not line:
             if proc.poll() is not None:
                 break
-            time.sleep(0.05)
             continue
         try:
             msg = json.loads(line)

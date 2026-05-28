@@ -41,6 +41,7 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
       enabled: model?.enabled || false,
       reasoning,
       upstream_format: upstreamFormat,
+      supports_images: model?.supports_images,
     })
   }
 

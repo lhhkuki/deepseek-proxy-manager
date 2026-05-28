@@ -66,10 +66,18 @@ function cleanupStaleBackends(backendPath) {
   const escapedPath = backendPath.replace(/'/g, "''")
   const script = [
     `$target = [System.IO.Path]::GetFullPath('${escapedPath}')`,
+    `$scriptName = [System.IO.Path]::GetFileName($target)`,
     'Get-Process proxy-backend -ErrorAction SilentlyContinue | ForEach-Object {',
     '  try {',
     '    if ($_.Path -and ([System.IO.Path]::GetFullPath($_.Path) -eq $target)) {',
     '      Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue',
+    '    }',
+    '  } catch {}',
+    '}',
+    'Get-CimInstance Win32_Process -Filter "name = \'python.exe\' or name = \'pythonw.exe\'" -ErrorAction SilentlyContinue | ForEach-Object {',
+    '  try {',
+    '    if ($_.CommandLine -and $_.CommandLine.Contains($scriptName) -and $_.CommandLine.Contains($target)) {',
+    '      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue',
     '    }',
     '  } catch {}',
     '}',
@@ -129,7 +137,10 @@ function waitForBackend(retries = 30) {
 function stopBackend() {
   // Graceful stop via API first
   try {
-    const req = require('http').request('http://127.0.0.1:15801/api/proxy/stop', { method: 'POST' })
+    const req = require('http').request('http://127.0.0.1:15801/api/proxy/stop', {
+      method: 'POST',
+      headers: { 'X-AI-Proxy-Manager': '1' },
+    })
     req.on('error', () => {})
     req.write('')
     req.end()

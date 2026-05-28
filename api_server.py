@@ -6,7 +6,10 @@ import sys
 import queue
 import threading
 import itertools
+import ipaddress
+import socket
 from datetime import datetime
+from urllib.parse import urlparse
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -42,13 +45,29 @@ from proxy.codex_accounts import (
     refresh_account_usage,
 )
 
+CSRF_HEADER = "X-AI-Proxy-Manager"
+SENSITIVE_MODEL_KEYS = {"api_key"}
+
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:15801", "file://", "app://"])
+CORS(
+    app,
+    origins=["http://localhost:5173", "http://127.0.0.1:15801", "file://", "app://"],
+    allow_headers=["Content-Type", CSRF_HEADER],
+)
 
 proxy_server = None
 _logs_history = []
 _logs_lock = threading.Lock()
 _log_counter = itertools.count()
+
+
+@app.before_request
+def _require_local_app_header_for_mutations():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    if request.path.startswith("/api/") and request.headers.get(CSRF_HEADER) != "1":
+        return jsonify({"status": "error", "message": "Missing local app request header"}), 403
+    return None
 
 
 def set_proxy_instance(proxy):
@@ -82,33 +101,74 @@ def _drain_log_queue():
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
-    return jsonify(load_config())
+    return jsonify(_redact_config(load_config()))
 
 
 ALLOWED_CONFIG_KEYS = {"port", "models"}
-ALLOWED_MODEL_KEYS = {"id", "name", "enabled", "base_url", "api_key", "reasoning", "upstream_format"}
-
-# Block internal/private hosts to prevent SSRF
-_BLOCKED_URL_PREFIXES = (
-    "http://127.", "http://localhost", "http://10.", "http://172.16.",
-    "http://172.17.", "http://172.18.", "http://172.19.", "http://172.20.",
-    "http://172.21.", "http://172.22.", "http://172.23.", "http://172.24.",
-    "http://172.25.", "http://172.26.", "http://172.27.", "http://172.28.",
-    "http://172.29.", "http://172.30.", "http://172.31.", "http://192.168.",
-    "http://0.", "ftp://", "file://",
-)
-
+ALLOWED_MODEL_KEYS = {"id", "name", "enabled", "base_url", "api_key", "reasoning", "upstream_format", "supports_images"}
 
 def _validate_base_url(url):
     """Reject internal/private URLs to prevent SSRF."""
     if not url:
         return
-    lower = url.lower().strip()
-    if not lower.startswith("https://"):
-        raise ValueError(f"base_url must use HTTPS: {url[:60]}")
-    for prefix in _BLOCKED_URL_PREFIXES:
-        if lower.startswith(prefix):
-            raise ValueError(f"base_url is not allowed: {url[:60]}")
+    raw = str(url).strip()
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() != "https":
+        raise ValueError(f"base_url must use HTTPS: {raw[:60]}")
+    host = (parsed.hostname or "").strip().rstrip(".").lower()
+    if not host:
+        raise ValueError(f"base_url host is required: {raw[:60]}")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError(f"base_url is not allowed: {raw[:60]}")
+
+    def _is_blocked_ip(value):
+        ip = ipaddress.ip_address(value)
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_unspecified
+            or ip.is_reserved
+            or ip.is_multicast
+        )
+
+    try:
+        if _is_blocked_ip(host):
+            raise ValueError(f"base_url is not allowed: {raw[:60]}")
+        return
+    except ValueError as exc:
+        if "base_url is not allowed" in str(exc):
+            raise
+
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return
+    for info in infos:
+        address = info[4][0]
+        if _is_blocked_ip(address):
+            raise ValueError(f"base_url resolves to a private address: {raw[:60]}")
+
+
+def _redact_model(model):
+    if not isinstance(model, dict):
+        return model
+    redacted = dict(model)
+    for key in SENSITIVE_MODEL_KEYS:
+        if redacted.get(key):
+            redacted[key] = ""
+    redacted["has_api_key"] = bool(model.get("api_key"))
+    return redacted
+
+
+def _redact_config(cfg):
+    if not isinstance(cfg, dict):
+        return cfg
+    redacted = dict(cfg)
+    models = redacted.get("models")
+    if isinstance(models, list):
+        redacted["models"] = [_redact_model(m) for m in models]
+    return redacted
 
 
 def _sanitize_config(cfg):
@@ -129,19 +189,39 @@ def _sanitize_config(cfg):
     return clean
 
 
+def _merge_existing_model_secrets(models):
+    existing = {
+        str(m.get("id") or ""): m
+        for m in load_config().get("models", [])
+        if isinstance(m, dict)
+    }
+    for model in models:
+        model_id = str(model.get("id") or "")
+        old_model = existing.get(model_id)
+        if old_model and not model.get("api_key") and old_model.get("api_key"):
+            model["api_key"] = old_model.get("api_key")
+    return models
+
+
 @app.route('/api/config', methods=['POST'])
 def update_config():
     cfg = request.json
     if not isinstance(cfg, dict):
         return jsonify({"status": "error", "message": "Invalid config format"}), 400
-    save_config(_sanitize_config(cfg))
+    try:
+        clean = _sanitize_config(cfg)
+        if isinstance(clean.get("models"), list):
+            clean["models"] = _merge_existing_model_secrets(clean["models"])
+        save_config(clean)
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
     return jsonify({"status": "ok"})
 
 
 @app.route('/api/models', methods=['GET'])
 def get_models():
     cfg = load_config()
-    return jsonify(cfg.get("models", []))
+    return jsonify([_redact_model(m) for m in cfg.get("models", [])])
 
 
 @app.route('/api/models', methods=['POST'])
@@ -160,7 +240,7 @@ def update_models():
             return jsonify({"status": "error", "message": str(e)}), 400
         sanitized.append(sm)
     cfg = load_config()
-    cfg["models"] = sanitized
+    cfg["models"] = _merge_existing_model_secrets(sanitized)
     save_config(cfg)
     return jsonify({"status": "ok"})
 

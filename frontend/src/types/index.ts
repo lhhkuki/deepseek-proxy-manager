@@ -4,8 +4,10 @@
   enabled: boolean;
   base_url: string;
   api_key: string;
+  has_api_key?: boolean;
   reasoning?: boolean;
   upstream_format?: string;
+  supports_images?: boolean;
 }
 
 export interface Config {

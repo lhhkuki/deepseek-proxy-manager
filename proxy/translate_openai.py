@@ -15,6 +15,8 @@ class OpenAITranslateMixin:
         has_system_from_input = False
 
         input_val = req.get("input", [])
+        if isinstance(input_val, str):
+            input_val = [{"role": "user", "content": input_val}]
         if not isinstance(input_val, list):
             raise ValueError("'input' must be a list")
 
@@ -26,7 +28,7 @@ class OpenAITranslateMixin:
                 output_content = item.get("output", "")
                 blocks = self._extract_content_blocks(output_content)
                 has_image = any(b.get("type") == "image" for b in blocks)
-                if has_image:
+                if has_image and not self._should_reject_images_for_model(self._active_model_config()):
                     content_parts = []
                     for b in blocks:
                         if b.get("type") == "image":
@@ -69,7 +71,13 @@ class OpenAITranslateMixin:
                 role = "user"
             if role == "system":
                 has_system_from_input = True
-            content = self._extract_text(item.get("content", ""))
+            raw_content = item.get("content", "")
+            blocks = self._extract_content_blocks(raw_content)
+            has_image = any(b.get("type") == "image" for b in blocks)
+            if has_image and not self._should_reject_images_for_model(self._active_model_config()):
+                content = self._chat_content_parts(blocks)
+            else:
+                content = self._extract_text(raw_content)
 
             msg = {"role": role, "content": content}
 
@@ -183,6 +191,27 @@ class OpenAITranslateMixin:
             elif isinstance(fmt, dict) and fmt.get("type") in ("text", "json_object"):
                 chat["response_format"] = fmt
         return chat
+
+    @staticmethod
+    def _active_model_config():
+        from .config import get_active_model_config
+        return get_active_model_config()
+
+    @staticmethod
+    def _chat_content_parts(blocks):
+        content_parts = []
+        for block in blocks:
+            if block.get("type") == "image":
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": block.get("image_url", "")},
+                })
+            else:
+                content_parts.append({
+                    "type": "text",
+                    "text": block.get("text", ""),
+                })
+        return content_parts
 
     def _xlat_tools(self, tools):
         import uuid
@@ -329,10 +358,23 @@ class OpenAITranslateMixin:
                     and not prev.get("tool_calls") and not curr.get("tool_calls")):
                 pc = prev.get("content", "")
                 cc = curr.get("content", "")
-                prev["content"] = f"{pc}\n{cc}".strip()
+                if isinstance(pc, list) or isinstance(cc, list):
+                    prev["content"] = (
+                        OpenAITranslateMixin._content_to_parts(pc)
+                        + OpenAITranslateMixin._content_to_parts(cc)
+                    )
+                else:
+                    prev["content"] = f"{pc}\n{cc}".strip()
                 messages.pop(i)
                 continue
             i += 1
+
+    @staticmethod
+    def _content_to_parts(content):
+        if isinstance(content, list):
+            return content
+        text = str(content) if content else ""
+        return [{"type": "text", "text": text}] if text else []
 
     @staticmethod
     def _sanitize_messages(messages):
@@ -374,6 +416,7 @@ class OpenAITranslateMixin:
             cache_reasoning(chat_req, reasoning)
 
         output_items = []
+        stream_completed = False
         if content:
             output_items.append({
                 "id": self._gid("msg_"),
@@ -493,11 +536,12 @@ class OpenAITranslateMixin:
                 }
             })
             safe_log(f"Stream fetch failed: {detail[:500]}")
-            try:
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-            except Exception:
-                pass
+            if not stream_completed:
+                try:
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
             return
 
         try:
@@ -514,6 +558,7 @@ class OpenAITranslateMixin:
                     continue
                 raw = raw.decode(errors="replace")
                 if raw.strip() == "data: [DONE]":
+                    stream_completed = True
                     if not text_closed and full_text:
                         close_text_msg()
                     for tc in tcs.values():
@@ -575,7 +620,7 @@ class OpenAITranslateMixin:
                     })
                     self.wfile.write(b"data: [DONE]\n\n")
                     self.wfile.flush()
-                    continue
+                    break
 
                 if not raw.startswith("data:"):
                     continue
@@ -661,7 +706,9 @@ class OpenAITranslateMixin:
             if full_reasoning:
                 cache_reasoning(chat_req, full_reasoning)
             # Ensure stream always gets completion
-            if not started and not text_closed:
+            if stream_completed:
+                pass
+            elif not started and not text_closed:
                 # No data was read — return error as SSE
                 self._sse("response.completed", {
                     "type": "response.completed",

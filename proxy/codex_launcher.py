@@ -399,22 +399,52 @@ def terminate_existing_codex(timeout=8):
     return killed
 
 
+def _launcher_owned_codex_processes():
+    cache_root = os.path.normcase(os.path.abspath(_launcher_cache_root()))
+    owned = []
+    for proc in codex_processes():
+        path = os.path.normcase(os.path.abspath(proc.get("path") or ""))
+        try:
+            is_owned = path and os.path.commonpath([cache_root, path]) == cache_root
+        except ValueError:
+            is_owned = False
+        if is_owned:
+            owned.append(proc)
+    return owned
+
+
+def _taskkill_process(pid):
+    subprocess.run(
+        ["taskkill", "/PID", str(pid), "/F", "/T"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+
 def stop_launched_codex(timeout=8):
     global _codex_process
     killed = []
     if _codex_process is None:
+        targets = _launcher_owned_codex_processes()
+        for proc in targets:
+            try:
+                _taskkill_process(proc["id"])
+                killed.append(proc)
+            except Exception:
+                pass
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not _launcher_owned_codex_processes():
+                break
+            time.sleep(0.25)
         return killed
     if _codex_process.poll() is not None:
         _codex_process = None
         return killed
     pid = _codex_process.pid
     try:
-        subprocess.run(
-            ["taskkill", "/PID", str(pid), "/F", "/T"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
+        _taskkill_process(pid)
         killed.append({"id": pid, "name": "Codex", "path": ""})
     except Exception:
         pass
@@ -472,6 +502,8 @@ def launcher_status(port=DEFAULT_CDP_PORT):
 def launch_codex(port=DEFAULT_CDP_PORT, terminate_existing=False):
     global _codex_process
     if cdp_available(port):
+        if _codex_process is None and not _launcher_owned_codex_processes():
+            raise RuntimeError(f"CDP port {port} is already in use by a process not launched by AI Proxy Manager.")
         return launcher_status(port)
     if terminate_existing:
         terminate_existing_codex()
@@ -481,7 +513,6 @@ def launch_codex(port=DEFAULT_CDP_PORT, terminate_existing=False):
     args = [
         exe,
         f"--remote-debugging-port={port}",
-        "--remote-allow-origins=*",
         f"--user-data-dir={launcher_user_data_dir()}",
         "--no-first-run",
     ]
@@ -508,6 +539,8 @@ def launch_codex(port=DEFAULT_CDP_PORT, terminate_existing=False):
 def launch_codex(port=DEFAULT_CDP_PORT, terminate_existing=False):
     global _codex_process
     if cdp_available(port):
+        if _codex_process is None and not _launcher_owned_codex_processes():
+            raise RuntimeError(f"CDP port {port} is already in use by a process not launched by AI Proxy Manager.")
         return launcher_status(port)
     if terminate_existing:
         terminate_existing_codex()
@@ -521,7 +554,6 @@ def launch_codex(port=DEFAULT_CDP_PORT, terminate_existing=False):
     args = [
         launch_exe,
         f"--remote-debugging-port={port}",
-        "--remote-allow-origins=*",
         "--no-first-run",
     ]
     env = os.environ.copy()

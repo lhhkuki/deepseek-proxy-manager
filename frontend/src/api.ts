@@ -1,6 +1,7 @@
-import type { CodexAccountsStatus, CodexConfigStatus, CodexLauncherStatus, Model } from './types'
+import type { CodexAccountsStatus, CodexConfigStatus, CodexLauncherStatus, Config, LogEntry, Model } from './types'
 
 const API_BASE = 'http://127.0.0.1:15801/api'
+const LOCAL_APP_HEADER = { 'X-AI-Proxy-Manager': '1' }
 
 async function fetchWithRetry(url: string, options?: RequestInit, retries = 3): Promise<Response> {
   for (let i = 0; i < retries; i++) {
@@ -18,163 +19,183 @@ async function fetchWithRetry(url: string, options?: RequestInit, retries = 3): 
   throw new Error('Max retries exceeded')
 }
 
-export async function getConfig() {
-  const res = await fetchWithRetry(`${API_BASE}/config`)
-  return res.json()
+async function readJson<T>(res: Response): Promise<T> {
+  const data = await res.json().catch(() => ({}))
+  const maybeError = data as { status?: string; message?: string; error?: unknown }
+  if (!res.ok || maybeError.status === 'error') {
+    const message = maybeError.message || (typeof maybeError.error === 'string' ? maybeError.error : `HTTP ${res.status}`)
+    throw new Error(message)
+  }
+  return data as T
 }
 
-export async function saveConfig(config: Record<string, unknown>) {
-  const res = await fetchWithRetry(`${API_BASE}/config`, {
+function withLocalHeader(options: RequestInit = {}): RequestInit {
+  return {
+    ...options,
+    headers: {
+      ...LOCAL_APP_HEADER,
+      ...(options.headers || {}),
+    },
+  }
+}
+
+export async function getConfig() {
+  const res = await fetchWithRetry(`${API_BASE}/config`)
+  return readJson<Config>(res)
+}
+
+export async function saveConfig(config: Config | Record<string, unknown>) {
+  const res = await fetchWithRetry(`${API_BASE}/config`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
-  })
-  return res.json()
+  }))
+  return readJson<{ status: string; message?: string }>(res)
 }
 
 export async function getModels() {
   const res = await fetchWithRetry(`${API_BASE}/models`)
-  return res.json() as Promise<Model[]>
+  return readJson<Model[]>(res)
 }
 
 export async function saveModels(models: Model[]) {
-  const res = await fetchWithRetry(`${API_BASE}/models`, {
+  const res = await fetchWithRetry(`${API_BASE}/models`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(models),
-  })
-  return res.json()
+  }))
+  return readJson<{ status: string; message?: string }>(res)
 }
 
 export async function enableModel(idx: number) {
-  const res = await fetchWithRetry(`${API_BASE}/models/${idx}/enable`, { method: 'POST' })
-  return res.json()
+  const res = await fetchWithRetry(`${API_BASE}/models/${idx}/enable`, withLocalHeader({ method: 'POST' }))
+  return readJson<{ status: string; message?: string }>(res)
 }
 
 export async function deleteModel(idx: number) {
-  const res = await fetchWithRetry(`${API_BASE}/models/${idx}`, { method: 'DELETE' })
-  return res.json()
+  const res = await fetchWithRetry(`${API_BASE}/models/${idx}`, withLocalHeader({ method: 'DELETE' }))
+  return readJson<{ status: string; message?: string }>(res)
 }
 
 export async function getLogs() {
   const res = await fetchWithRetry(`${API_BASE}/logs`)
-  return res.json()
+  return readJson<LogEntry[]>(res)
 }
 
 export async function getStatus() {
   const res = await fetchWithRetry(`${API_BASE}/status`)
-  return res.json()
+  return readJson<{ running: boolean; autostart: boolean }>(res)
 }
 
 export async function startProxy() {
-  const res = await fetchWithRetry(`${API_BASE}/proxy/start`, { method: 'POST' })
-  return res.json()
+  const res = await fetchWithRetry(`${API_BASE}/proxy/start`, withLocalHeader({ method: 'POST' }))
+  return readJson<{ status: string; message?: string; port?: number }>(res)
 }
 
 export async function stopProxy() {
-  const res = await fetchWithRetry(`${API_BASE}/proxy/stop`, { method: 'POST' })
-  return res.json()
+  const res = await fetchWithRetry(`${API_BASE}/proxy/stop`, withLocalHeader({ method: 'POST' }))
+  return readJson<{ status: string; message?: string }>(res)
 }
 
 export async function toggleAutostart(enabled: boolean) {
-  const res = await fetchWithRetry(`${API_BASE}/autostart`, {
+  const res = await fetchWithRetry(`${API_BASE}/autostart`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
-  })
-  return res.json()
+  }))
+  return readJson<{ status: string; message?: string }>(res)
 }
 
 export async function getCodexConfigStatus() {
   const res = await fetchWithRetry(`${API_BASE}/codex-config/status`)
-  return res.json() as Promise<CodexConfigStatus>
+  return readJson<CodexConfigStatus>(res)
 }
 
 export async function applyProxyCodexConfig(port: number, model?: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-config/proxy`, {
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/proxy`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ port, model }),
-  })
-  return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
+  }))
+  return readJson<{ status: string; message?: string; codex?: CodexConfigStatus }>(res)
 }
 
 export async function applyPureApiCodexConfig(port: number, model?: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-config/pure-api`, {
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/pure-api`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ port, model }),
-  })
-  return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
+  }))
+  return readJson<{ status: string; message?: string; codex?: CodexConfigStatus }>(res)
 }
 
 export async function applyOfficialCodexConfig() {
-  const res = await fetchWithRetry(`${API_BASE}/codex-config/official`, { method: 'POST' })
-  return res.json() as Promise<{ status: string; message?: string; codex?: CodexConfigStatus }>
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/official`, withLocalHeader({ method: 'POST' }))
+  return readJson<{ status: string; message?: string; codex?: CodexConfigStatus }>(res)
 }
 
 export async function getCodexLauncherStatus() {
   const res = await fetchWithRetry(`${API_BASE}/codex-launcher/status`)
-  return res.json() as Promise<CodexLauncherStatus>
+  return readJson<CodexLauncherStatus>(res)
 }
 
 export async function launchCodexWithUnlocks(terminateExisting = false) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/launch`, {
+  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/launch`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ terminate_existing: terminateExisting }),
-  })
-  return res.json() as Promise<{ status: string; message?: string; launcher?: CodexLauncherStatus }>
+  }))
+  return readJson<{ status: string; message?: string; launcher?: CodexLauncherStatus }>(res)
 }
 
 export async function stopCodexProcesses() {
-  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/stop`, { method: 'POST' })
-  return res.json() as Promise<{ status: string; message?: string; launcher?: CodexLauncherStatus }>
+  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/stop`, withLocalHeader({ method: 'POST' }))
+  return readJson<{ status: string; message?: string; launcher?: CodexLauncherStatus }>(res)
 }
 
 export async function injectCodexUnlocks() {
-  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/inject`, { method: 'POST' })
-  return res.json() as Promise<{ status: string; message?: string; launcher?: CodexLauncherStatus }>
+  const res = await fetchWithRetry(`${API_BASE}/codex-launcher/inject`, withLocalHeader({ method: 'POST' }))
+  return readJson<{ status: string; message?: string; launcher?: CodexLauncherStatus }>(res)
 }
 
 export async function getCodexAccounts() {
   const res = await fetchWithRetry(`${API_BASE}/codex-accounts`)
-  return res.json() as Promise<CodexAccountsStatus>
+  return readJson<CodexAccountsStatus>(res)
 }
 
 export async function importCurrentCodexAccount(alias?: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/import-current`, {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/import-current`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ alias }),
-  })
-  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+  }))
+  return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
 }
 
 export async function refreshCodexAccountUsage(accountId?: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/refresh-usage`, {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/refresh-usage`, withLocalHeader({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ account_id: accountId }),
-  })
-  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+  }))
+  return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
 }
 
 export async function switchCodexAccount(accountId: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}/switch`, { method: 'POST' })
-  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}/switch`, withLocalHeader({ method: 'POST' }))
+  return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
 }
 
 export async function renameCodexAccount(accountId: string, alias: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}`, {
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}`, withLocalHeader({
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ alias }),
-  })
-  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+  }))
+  return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
 }
 
 export async function deleteCodexAccount(accountId: string) {
-  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}`, { method: 'DELETE' })
-  return res.json() as Promise<{ status: string; message?: string; accounts?: CodexAccountsStatus }>
+  const res = await fetchWithRetry(`${API_BASE}/codex-accounts/${accountId}`, withLocalHeader({ method: 'DELETE' }))
+  return readJson<{ status: string; message?: string; accounts?: CodexAccountsStatus }>(res)
 }

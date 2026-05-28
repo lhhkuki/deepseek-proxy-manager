@@ -11,11 +11,14 @@ from urllib.error import HTTPError
 from http.client import RemoteDisconnected
 
 from .config import load_config, get_active_model_config, safe_log
+from .codex_config import BEARER_TOKEN
 from .translate_openai import OpenAITranslateMixin
 from .translate_anthropic import AnthropicTranslateMixin
 
 MAX_BODY_SIZE = 10 * 1024 * 1024
 MAX_RESPONSE_SIZE = 50 * 1024 * 1024
+IMAGE_UNSUPPORTED_MESSAGE = "当前选择的模型不支持图片输入，无法识别图片内容。请切换到支持视觉的模型后重试。"
+IMAGE_OMITTED_TEXT = "[图片: 当前模型不支持读取图片内容，图片内容已被省略]"
 
 CORS_HEADERS = [
     ("Access-Control-Allow-Origin", "http://127.0.0.1:15801"),
@@ -49,6 +52,9 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
         self.end_headers()
 
     def do_GET(self):
+        if self.path.startswith("/v1/") and not self._authorized_proxy_request():
+            self._json(401, {"error": "Unauthorized"})
+            return
         if self.path == "/v1/models":
             cfg = load_config()
             models = []
@@ -109,6 +115,9 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             self.end_headers()
 
     def do_POST(self):
+        if self.path.startswith("/v1/") and not self._authorized_proxy_request():
+            self._json(401, {"error": "Unauthorized"})
+            return
         if self.path == "/v1/responses":
             self._handle_responses()
         elif self.path.startswith("/v1/"):
@@ -150,6 +159,11 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             return fmt == "anthropic"
         return False
 
+    def _authorized_proxy_request(self):
+        auth = self.headers.get("Authorization", "")
+        scheme, _, token = auth.partition(" ")
+        return scheme.lower() == "bearer" and token.strip() == BEARER_TOKEN
+
     def _handle_responses(self):
         try:
             body = self._read_body()
@@ -169,6 +183,15 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
             safe_log(f"REQ model={model_cfg.get('id','?')} stream={stream} base={base_url[:50]}")
 
             is_anthropic = self._is_anthropic_upstream(base_url, model_cfg)
+            if self._request_has_direct_image_input(body) and self._should_reject_images_for_model(model_cfg):
+                self._safe_json(400, {
+                    "error": {
+                        "message": IMAGE_UNSUPPORTED_MESSAGE,
+                        "type": "unsupported_image_input",
+                        "code": "unsupported_image_input",
+                    }
+                })
+                return
 
             if is_anthropic:
                 req_body = self._to_anthropic(body)
@@ -234,9 +257,7 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                     if t in ("input_text", "output_text"):
                         parts.append(p.get("text", ""))
                     elif t == "input_image":
-                        img_url = p.get("image_url", "")
-                        if img_url:
-                            parts.append("[image: " + str(img_url)[:80] + "]")
+                        parts.append(IMAGE_OMITTED_TEXT)
                     else:
                         parts.append(p.get("text", json.dumps(p)))
             return "\n".join(parts) if parts else ""
@@ -264,6 +285,57 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                         blocks.append({"type": "text", "text": p.get("text", json.dumps(p))})
             return blocks if blocks else [{"type": "text", "text": ""}]
         return [{"type": "text", "text": str(content) if content else ""}]
+
+    @staticmethod
+    def _content_has_input_image(content):
+        if isinstance(content, list):
+            return any(isinstance(p, dict) and p.get("type") == "input_image" for p in content)
+        return False
+
+    @classmethod
+    def _request_has_direct_image_input(cls, body):
+        input_val = body.get("input", [])
+        if not isinstance(input_val, list):
+            return False
+        for item in input_val:
+            if not isinstance(item, dict):
+                continue
+            # Tool outputs may contain images produced by tools. Do not reject the
+            # whole turn for those; translators degrade them to text for text models.
+            if item.get("type") == "function_call_output":
+                continue
+            if cls._content_has_input_image(item.get("content", "")):
+                return True
+        return False
+
+    @staticmethod
+    def _model_supports_images(model_cfg):
+        if not model_cfg:
+            return False
+        if model_cfg.get("supports_images") is True:
+            return True
+        if model_cfg.get("upstream_format") == "anthropic":
+            return True
+        model_text = " ".join([
+            str(model_cfg.get("id", "")),
+            str(model_cfg.get("name", "")),
+        ]).lower()
+        vision_markers = (
+            "vision", "visual", "image", "vl", "gpt-4o",
+            "gemini", "claude", "qwen-vl", "qwen2-vl", "qwen2.5-vl",
+        )
+        return any(marker in model_text for marker in vision_markers)
+
+    @classmethod
+    def _should_reject_images_for_model(cls, model_cfg):
+        if cls._model_supports_images(model_cfg):
+            return False
+        base_url = str((model_cfg or {}).get("base_url", "")).lower()
+        model_text = " ".join([
+            str((model_cfg or {}).get("id", "")),
+            str((model_cfg or {}).get("name", "")),
+        ]).lower()
+        return "deepseek" in base_url or "deepseek" in model_text
 
     def _map_model(self, model_name):
         cfg = load_config()
@@ -395,7 +467,10 @@ class ProxyHandler(OpenAITranslateMixin, AnthropicTranslateMixin,
                       headers=headers, method=method)
         resp = urlopen(req, timeout=120)
         try:
-            return json.loads(resp.read())
+            raw = resp.read(MAX_RESPONSE_SIZE + 1)
+            if len(raw) > MAX_RESPONSE_SIZE:
+                raise ValueError("Upstream response too large: {0}+ bytes".format(MAX_RESPONSE_SIZE))
+            return json.loads(raw)
         finally:
             resp.close()
 

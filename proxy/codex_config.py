@@ -59,7 +59,7 @@ def _backup_file(path):
         return ""
     backup_dir = os.path.join(codex_home(), "backups_proxy_manager")
     os.makedirs(backup_dir, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int((time.time() % 1) * 1000):03d}-{os.getpid()}"
     backup_path = os.path.join(backup_dir, f"{os.path.basename(path)}.{stamp}.bak")
     with open(path, "rb") as src:
         data = src.read()
@@ -406,7 +406,7 @@ def apply_official_config():
     _write_text(path, contents + ("\n" if contents else ""))
     data = _read_json_object(auth_path())
     auth_backup_path = ""
-    if "OPENAI_API_KEY" in data:
+    if data.get("OPENAI_API_KEY") == BEARER_TOKEN:
         auth_backup_path = _backup_file(auth_path())
         data.pop("OPENAI_API_KEY", None)
         _write_json_object(auth_path(), data)

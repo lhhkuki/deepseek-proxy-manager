@@ -20,6 +20,8 @@ class AnthropicTranslateMixin:
 
         # Collect output call_ids to filter orphaned function_calls
         input_val = req.get("input", [])
+        if isinstance(input_val, str):
+            input_val = [{"role": "user", "content": input_val}]
         if not isinstance(input_val, list):
             raise ValueError("'input' must be a list")
 
@@ -107,6 +109,12 @@ class AnthropicTranslateMixin:
             if role not in self.ALLOWED_ROLES:
                 role = "user"
             raw_blocks = self._extract_content_blocks(item.get("content", ""))
+            if role == "system":
+                text_only = "".join(
+                    b.get("text", "") for b in raw_blocks if b.get("type") == "text")
+                if text_only:
+                    system_parts.append(text_only)
+                continue
             # Convert image blocks to Anthropic format
             content_blocks = []
             for b in raw_blocks:
@@ -192,6 +200,10 @@ class AnthropicTranslateMixin:
             anthro_tools = self._xlat_tools_anthropic(tools)
             if anthro_tools:
                 body["tools"] = anthro_tools
+        if "tool_choice" in req:
+            tool_choice = self._xlat_tool_choice_anthropic(req["tool_choice"])
+            if tool_choice:
+                body["tool_choice"] = tool_choice
         return body
 
     @staticmethod
@@ -339,6 +351,25 @@ class AnthropicTranslateMixin:
                 })
             # else: skip unknown types (image_generation, etc.)
         return result
+
+    @staticmethod
+    def _xlat_tool_choice_anthropic(tool_choice):
+        if isinstance(tool_choice, str):
+            if tool_choice == "required":
+                return {"type": "any"}
+            if tool_choice in ("auto", "none"):
+                return {"type": tool_choice}
+            if tool_choice == "any":
+                return {"type": "any"}
+            return None
+        if isinstance(tool_choice, dict):
+            tc_type = tool_choice.get("type", "")
+            name = tool_choice.get("name", "")
+            if not name and isinstance(tool_choice.get("function"), dict):
+                name = tool_choice["function"].get("name", "")
+            if tc_type in ("function", "tool") and name:
+                return {"type": "tool", "name": name}
+        return None
 
     def _from_anthropic_resp(self, anthro_resp):
         import time
