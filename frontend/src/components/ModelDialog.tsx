@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Eye, EyeOff, Brain } from 'lucide-react'
+import { X, Eye, EyeOff, Brain, Image } from 'lucide-react'
 import type { Model } from '../types'
 
 interface ModelDialogProps {
@@ -24,6 +25,7 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
   const [apiKey, setApiKey] = useState(() => model?.api_key ?? '')
   const [reasoning, setReasoning] = useState(() => model?.reasoning ?? false)
   const [upstreamFormat, setUpstreamFormat] = useState(() => model?.upstream_format ?? 'openai')
+  const [supportsImages, setSupportsImages] = useState(() => model?.supports_images ?? false)
   const [showKey, setShowKey] = useState(false)
   const [idError, setIdError] = useState(false)
 
@@ -41,7 +43,7 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
       enabled: model?.enabled || false,
       reasoning,
       upstream_format: upstreamFormat,
-      supports_images: model?.supports_images,
+      supports_images: supportsImages,
     })
   }
 
@@ -104,16 +106,22 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
                 ))}
               </div>
             </div>
-            <label className="flex items-center gap-3 cursor-pointer select-none">
-              <button type="button" onClick={()=>setReasoning(!reasoning)}
-                className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${reasoning ? 'bg-accent' : 'bg-[var(--border-hover)]'}`}>
-                <motion.div animate={{ x: reasoning ? 20 : 2 }}
-                  transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-                  className="absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white shadow-sm" />
-              </button>
-              <Brain className="w-4 h-4 text-[var(--text-muted)]" />
-              <span className="text-[14px] text-[var(--text-primary)]">开启推理</span>
-            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <ToggleOption
+                active={reasoning}
+                icon={<Brain className="w-4 h-4" />}
+                title="开启推理"
+                detail="模型会返回推理内容时开启"
+                onToggle={() => setReasoning(!reasoning)}
+              />
+              <ToggleOption
+                active={supportsImages}
+                icon={<Image className="w-4 h-4" />}
+                title="支持图片输入"
+                detail="模型可处理图片时开启"
+                onToggle={() => setSupportsImages(!supportsImages)}
+              />
+            </div>
           </div>
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--border)]">
             <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={onClose}
@@ -124,5 +132,29 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
         </motion.div>
       </motion.div>
     </AnimatePresence>
+  )
+}
+
+function ToggleOption({ active, icon, title, detail, onToggle }: { active: boolean; icon: ReactNode; title: string; detail: string; onToggle: () => void }) {
+  return (
+    <button type="button" onClick={onToggle}
+      className={`text-left rounded-[var(--radius-xs)] border p-3 transition-colors ${
+        active
+          ? 'border-accent bg-accent-soft'
+          : 'border-[var(--border)] bg-[var(--bg-primary)] hover:bg-[var(--bg-surface-hover)]'
+      }`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-primary)]">
+          <span className={active ? 'text-accent' : 'text-[var(--text-muted)]'}>{icon}</span>
+          {title}
+        </div>
+        <span className={`relative h-5 w-9 rounded-full transition-colors ${active ? 'bg-accent' : 'bg-[var(--border-hover)]'}`}>
+          <motion.span animate={{ x: active ? 16 : 2 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+            className="absolute top-[2px] h-4 w-4 rounded-full bg-white shadow-sm" />
+        </span>
+      </div>
+      <div className="text-[11px] text-[var(--text-muted)] mt-2">{detail}</div>
+    </button>
   )
 }

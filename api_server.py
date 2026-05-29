@@ -8,8 +8,10 @@ import threading
 import itertools
 import ipaddress
 import socket
+import shutil
 from datetime import datetime
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -29,6 +31,9 @@ from proxy.codex_config import (
     apply_proxy_config,
     apply_pure_api_config,
     apply_official_config,
+    auth_path,
+    codex_home,
+    config_path,
 )
 from proxy.codex_launcher import (
     launcher_status,
@@ -46,6 +51,73 @@ from proxy.codex_accounts import (
 
 CSRF_HEADER = "X-AI-Proxy-Manager"
 SENSITIVE_MODEL_KEYS = {"api_key"}
+APP_VERSION = "3.0.0"
+
+MODEL_PRESETS = [
+    {
+        "id": "deepseek-chat",
+        "name": "DeepSeek Chat",
+        "base_url": "https://api.deepseek.com",
+        "upstream_format": "openai",
+        "reasoning": False,
+        "supports_images": False,
+        "description": "DeepSeek 通用聊天模型",
+    },
+    {
+        "id": "deepseek-reasoner",
+        "name": "DeepSeek Reasoner",
+        "base_url": "https://api.deepseek.com",
+        "upstream_format": "openai",
+        "reasoning": True,
+        "supports_images": False,
+        "description": "DeepSeek 推理模型",
+    },
+    {
+        "id": "kimi-k2.6",
+        "name": "Kimi Code",
+        "base_url": "https://api.kimi.com/coding/v1",
+        "upstream_format": "anthropic",
+        "reasoning": False,
+        "supports_images": True,
+        "description": "Kimi Code / Moonshot 编码接口",
+    },
+    {
+        "id": "moonshot-v1-128k",
+        "name": "Moonshot 128K",
+        "base_url": "https://api.moonshot.cn/v1",
+        "upstream_format": "openai",
+        "reasoning": False,
+        "supports_images": False,
+        "description": "Moonshot OpenAI 兼容接口",
+    },
+    {
+        "id": "openrouter/auto",
+        "name": "OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "upstream_format": "openai",
+        "reasoning": False,
+        "supports_images": True,
+        "description": "OpenRouter 聚合模型入口",
+    },
+    {
+        "id": "qwen-plus",
+        "name": "阿里百炼 Qwen Plus",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "upstream_format": "openai",
+        "reasoning": False,
+        "supports_images": False,
+        "description": "阿里百炼 OpenAI 兼容接口",
+    },
+    {
+        "id": "doubao-seed-1-6",
+        "name": "火山方舟 Doubao",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "upstream_format": "openai",
+        "reasoning": False,
+        "supports_images": False,
+        "description": "火山方舟 OpenAI 兼容接口",
+    },
+]
 
 app = Flask(__name__)
 CORS(
@@ -281,6 +353,218 @@ def get_status():
     return jsonify({
         "running": proxy_server.is_running() if proxy_server else False,
         "autostart": is_autostart_enabled(),
+    })
+
+
+@app.route('/api/model-presets', methods=['GET'])
+def get_model_presets():
+    return jsonify(MODEL_PRESETS)
+
+
+def _diagnostic_item(key, label, ok, detail="", action=""):
+    return {
+        "key": key,
+        "label": label,
+        "ok": bool(ok),
+        "detail": str(detail or ""),
+        "action": str(action or ""),
+    }
+
+
+@app.route('/api/diagnostics', methods=['GET'])
+def get_diagnostics():
+    cfg = load_config()
+    active_model = get_active_model_config()
+    codex = codex_config_status()
+    launcher = launcher_status()
+    accounts = list_accounts()
+    running = proxy_server.is_running() if proxy_server else False
+    recent_errors = [
+        item for item in list(_logs_history)[-80:]
+        if "error" in str(item.get("message", "")).lower()
+        or "failed" in str(item.get("message", "")).lower()
+        or "fatal" in str(item.get("message", "")).lower()
+    ][-8:]
+    checks = [
+        _diagnostic_item(
+            "proxy",
+            "本地代理",
+            running,
+            f"监听端口 {cfg.get('port', 15800)}" if running else "代理未启动",
+            "点击右上角启动代理" if not running else "",
+        ),
+        _diagnostic_item(
+            "model",
+            "当前模型",
+            bool(active_model and active_model.get("api_key")),
+            (active_model or {}).get("id") or "未配置模型",
+            "在模型页添加 API Key" if not (active_model and active_model.get("api_key")) else "",
+        ),
+        _diagnostic_item(
+            "codex_config",
+            "Codex 配置",
+            codex.get("mode") in ("official", "proxy", "pure_api"),
+            f"模式：{codex.get('mode') or 'unknown'}",
+        ),
+        _diagnostic_item(
+            "codex_auth",
+            "Codex 认证",
+            bool(codex.get("auth", {}).get("authenticated") or codex.get("api_auth", {}).get("authenticated")),
+            codex.get("auth", {}).get("account") or codex.get("api_auth", {}).get("message") or "未检测到认证",
+            "在 Codex 登录或启用纯 API" if not (codex.get("auth", {}).get("authenticated") or codex.get("api_auth", {}).get("authenticated")) else "",
+        ),
+        _diagnostic_item(
+            "launcher",
+            "Codex 启动器",
+            bool(launcher.get("codex_exe")),
+            launcher.get("codex_exe") or "未找到 Codex 程序",
+            "安装 Codex Desktop 或设置 CODEX_APP_EXE" if not launcher.get("codex_exe") else "",
+        ),
+        _diagnostic_item(
+            "accounts",
+            "账号保险箱",
+            len(accounts.get("accounts", [])) > 0,
+            f"已保存 {len(accounts.get('accounts', []))} 个账号",
+            "在账号页保存当前 Codex 账号" if not accounts.get("accounts") else "",
+        ),
+    ]
+    return jsonify({
+        "version": APP_VERSION,
+        "status": {"running": running, "autostart": is_autostart_enabled()},
+        "active_model": _redact_model(active_model or {}),
+        "codex": codex,
+        "launcher": launcher,
+        "accounts": accounts,
+        "checks": checks,
+        "recent_errors": recent_errors,
+    })
+
+
+def _parse_version(value):
+    return [
+        int(part)
+        for part in str(value or "").lstrip("v").split(".")
+        if part.isdigit()
+    ]
+
+
+@app.route('/api/releases/latest', methods=['GET'])
+def get_latest_release():
+    url = "https://api.github.com/repos/lhhkuki/deepseek-proxy-manager/releases/latest"
+    try:
+        req = Request(url, headers={"User-Agent": "AI-Proxy-Manager"})
+        with urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read(1024 * 1024).decode("utf-8", errors="replace"))
+        tag = str(data.get("tag_name") or "")
+        return jsonify({
+            "ok": True,
+            "current_version": APP_VERSION,
+            "latest_version": tag.lstrip("v"),
+            "update_available": _parse_version(tag) > _parse_version(APP_VERSION),
+            "url": data.get("html_url", ""),
+            "name": data.get("name", ""),
+            "published_at": data.get("published_at", ""),
+        })
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "current_version": APP_VERSION,
+            "latest_version": "",
+            "update_available": False,
+            "url": "",
+            "message": str(e),
+        })
+
+
+def _backup_root():
+    return os.path.join(codex_home(), "backups_proxy_manager")
+
+
+def _safe_backup_path(path):
+    root = os.path.abspath(_backup_root())
+    candidate = os.path.abspath(str(path or ""))
+    try:
+        if os.path.commonpath([root, candidate]) != root:
+            raise ValueError("Invalid backup path.")
+    except ValueError as exc:
+        raise ValueError("Invalid backup path.") from exc
+    if not os.path.isfile(candidate):
+        raise ValueError("Backup file was not found.")
+    return candidate
+
+
+def _backup_type(path):
+    name = os.path.basename(path)
+    if name.startswith("config.toml."):
+        return "config"
+    return ""
+
+
+def _is_legacy_auth_backup(path):
+    name = os.path.basename(path)
+    return name.startswith("auth.json.") and name.endswith(".bak")
+
+
+def _prune_backup_items(items, kind, keep=20):
+    typed = [item for item in items if item["type"] == kind]
+    typed.sort(key=lambda item: item["updated_at"], reverse=True)
+    keep_paths = {item["path"] for item in typed[:keep]}
+    for item in typed[keep:]:
+        try:
+            os.remove(item["path"])
+        except OSError:
+            pass
+    return [item for item in items if item["type"] != kind or item["path"] in keep_paths]
+
+
+@app.route('/api/backups', methods=['GET'])
+def list_backups():
+    root = _backup_root()
+    items = []
+    if os.path.isdir(root):
+        for dirpath, _, filenames in os.walk(root):
+            for filename in filenames:
+                full = os.path.join(dirpath, filename)
+                if _is_legacy_auth_backup(full):
+                    try:
+                        os.remove(full)
+                    except OSError:
+                        pass
+                    continue
+                kind = _backup_type(full)
+                if not kind:
+                    continue
+                stat = os.stat(full)
+                items.append({
+                    "path": full,
+                    "name": filename,
+                    "type": kind,
+                    "size": stat.st_size,
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                })
+    items = _prune_backup_items(items, "config", 20)
+    items.sort(key=lambda item: item["updated_at"], reverse=True)
+    return jsonify({"root": root, "items": items})
+
+
+@app.route('/api/backups/restore', methods=['POST'])
+def restore_backup():
+    body = request.json if isinstance(request.json, dict) else {}
+    source = _safe_backup_path(body.get("path"))
+    kind = _backup_type(source)
+    if kind == "config":
+        target = config_path()
+    else:
+        return jsonify({"status": "error", "message": "Unsupported backup type"}), 400
+    current_backup = ""
+    if os.path.exists(target):
+        current_backup = shutil.copy2(target, target + ".restore-bak")
+    shutil.copy2(source, target)
+    return jsonify({
+        "status": "ok",
+        "restored": target,
+        "source": source,
+        "current_backup": current_backup or "",
     })
 
 

@@ -1,4 +1,4 @@
-import type { CodexAccountsStatus, CodexConfigStatus, CodexLauncherStatus, Config, LogEntry, Model } from './types'
+import type { BackupsStatus, CodexAccountsStatus, CodexConfigStatus, CodexLauncherStatus, Config, DiagnosticStatus, LatestRelease, LogEntry, Model, ModelPreset } from './types'
 
 const API_BASE = 'http://127.0.0.1:15801/api'
 const LOCAL_APP_HEADER = { 'X-AI-Proxy-Manager': '1' }
@@ -85,6 +85,35 @@ export async function getLogs() {
 export async function getStatus() {
   const res = await fetchWithRetry(`${API_BASE}/status`)
   return readJson<{ running: boolean; autostart: boolean }>(res)
+}
+
+export async function getDiagnostics() {
+  const res = await fetchWithRetry(`${API_BASE}/diagnostics`)
+  return readJson<DiagnosticStatus>(res)
+}
+
+export async function getLatestRelease() {
+  const res = await fetchWithRetry(`${API_BASE}/releases/latest`)
+  return readJson<LatestRelease>(res)
+}
+
+export async function getModelPresets() {
+  const res = await fetchWithRetry(`${API_BASE}/model-presets`)
+  return readJson<ModelPreset[]>(res)
+}
+
+export async function getBackups() {
+  const res = await fetchWithRetry(`${API_BASE}/backups`)
+  return readJson<BackupsStatus>(res)
+}
+
+export async function restoreBackup(path: string) {
+  const res = await fetchWithRetry(`${API_BASE}/backups/restore`, withLocalHeader({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  }))
+  return readJson<{ status: string; message?: string; restored?: string; source?: string; current_backup?: string }>(res)
 }
 
 export async function startProxy() {

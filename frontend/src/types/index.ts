@@ -15,6 +15,16 @@ export interface Config {
   models: Model[];
 }
 
+export interface ModelPreset {
+  id: string;
+  name: string;
+  base_url: string;
+  upstream_format: string;
+  reasoning: boolean;
+  supports_images: boolean;
+  description: string;
+}
+
 export interface CodexAuthStatus {
   authenticated: boolean;
   path: string;
@@ -127,6 +137,52 @@ export interface LogEntry {
   timestamp: string;
   message: string;
   level?: 'info' | 'warn' | 'error';
+}
+
+export interface DiagnosticCheck {
+  key: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+  action: string;
+}
+
+export interface DiagnosticStatus {
+  version: string;
+  status: {
+    running: boolean;
+    autostart: boolean;
+  };
+  active_model: Partial<Model>;
+  codex: CodexConfigStatus;
+  launcher: CodexLauncherStatus;
+  accounts: CodexAccountsStatus;
+  checks: DiagnosticCheck[];
+  recent_errors: LogEntry[];
+}
+
+export interface LatestRelease {
+  ok: boolean;
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  url: string;
+  name?: string;
+  published_at?: string;
+  message?: string;
+}
+
+export interface BackupItem {
+  path: string;
+  name: string;
+  type: 'config' | 'auth';
+  size: number;
+  updated_at: string;
+}
+
+export interface BackupsStatus {
+  root: string;
+  items: BackupItem[];
 }
 
 export interface Tab {

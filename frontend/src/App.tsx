@@ -2,27 +2,39 @@ import { useState, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Header from './components/Header'
 import TabBar from './components/TabBar'
+import DashboardTab from './components/DashboardTab'
 import ModelsTab from './components/ModelsTab'
 import LogsTab from './components/LogsTab'
 import SettingsTab from './components/SettingsTab'
 import AccountsTab from './components/AccountsTab'
 import ModelDialog from './components/ModelDialog'
+import ConfirmDialog from './components/ConfirmDialog'
 import * as api from './api'
-import type { Model, LogEntry } from './types'
+import type { Model, LogEntry, ModelPreset } from './types'
 
 const TABS = [
+  { id: 'dashboard', label: '总览' },
   { id: 'models', label: '模型' },
   { id: 'accounts', label: '账号' },
   { id: 'logs', label: '日志' },
   { id: 'settings', label: '设置' },
 ]
 
+const TAB_MOTION = {
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: 0 },
+  transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
+}
+
 function App() {
-  const [activeTab, setActiveTab] = useState('models')
+  const [activeTab, setActiveTab] = useState('dashboard')
   const [models, setModels] = useState<Model[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingModel, setEditingModel] = useState<Model | null>(null)
+  const [deleteModelIndex, setDeleteModelIndex] = useState<number | null>(null)
+  const [errorMessage, setErrorMessage] = useState('')
   const [port, setPort] = useState(15800)
   const [isRunning, setIsRunning] = useState(false)
   const [autostart, setAutostart] = useState(false)
@@ -77,15 +89,20 @@ function App() {
     }
   }, [])
 
-  const handleDeleteModel = useCallback(async (idx: number) => {
-    if (!confirm('确定要删除这个模型吗？')) return
+  const handleDeleteModel = useCallback((idx: number) => {
+    setDeleteModelIndex(idx)
+  }, [])
+
+  const confirmDeleteModel = useCallback(async () => {
+    if (deleteModelIndex === null) return
     try {
-      await api.deleteModel(idx)
+      await api.deleteModel(deleteModelIndex)
       setModels(await api.getModels())
+      setDeleteModelIndex(null)
     } catch (e) {
       console.error('Failed to delete model:', e)
     }
-  }, [])
+  }, [deleteModelIndex])
 
   const handleSaveModel = useCallback(async (model: Model) => {
     try {
@@ -112,6 +129,21 @@ function App() {
     setDialogOpen(true)
   }, [])
 
+  const handleAddPreset = useCallback((preset: ModelPreset) => {
+    const existing = models.find(model => model.id === preset.id)
+    setEditingModel({
+      id: preset.id,
+      name: preset.name,
+      enabled: existing?.enabled ?? models.length === 0,
+      base_url: preset.base_url,
+      api_key: existing?.api_key || '',
+      reasoning: preset.reasoning,
+      upstream_format: preset.upstream_format,
+      supports_images: preset.supports_images,
+    })
+    setDialogOpen(true)
+  }, [models])
+
   const handleSaveSettings = useCallback(async (newPort: number) => {
     try {
       const config = await api.getConfig()
@@ -120,7 +152,7 @@ function App() {
       setPort(newPort)
     } catch (e) {
       console.error("Failed to save settings:", e)
-      alert("保存设置失败: " + (e instanceof Error ? e.message : String(e)))
+      setErrorMessage("保存设置失败: " + (e instanceof Error ? e.message : String(e)))
     }
   }, [])
 
@@ -144,7 +176,7 @@ function App() {
       setIsRunning(status.running)
     } catch (e) {
       console.error('Failed to toggle proxy:', e)
-      alert('操作失败: ' + (e instanceof Error ? e.message : String(e)))
+      setErrorMessage('操作失败: ' + (e instanceof Error ? e.message : String(e)))
     }
   }, [isRunning])
 
@@ -154,14 +186,14 @@ function App() {
       <TabBar tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
 
       <div className="flex-1 overflow-hidden relative">
-        <AnimatePresence mode="wait">
+        <div className={activeTab === 'dashboard' ? 'h-full' : 'hidden'}>
+          <DashboardTab />
+        </div>
+        <AnimatePresence mode="sync">
           {activeTab === 'models' && (
             <motion.div
               key="models"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              {...TAB_MOTION}
               className="h-full"
             >
               <ModelsTab
@@ -171,16 +203,14 @@ function App() {
                 onDelete={handleDeleteModel}
                 onEdit={handleEditModel}
                 onAdd={handleAddModel}
+                onAddPreset={handleAddPreset}
               />
             </motion.div>
           )}
           {activeTab === 'logs' && (
             <motion.div
               key="logs"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              {...TAB_MOTION}
               className="h-full"
             >
               <LogsTab logs={logs} />
@@ -189,10 +219,7 @@ function App() {
           {activeTab === 'accounts' && (
             <motion.div
               key="accounts"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              {...TAB_MOTION}
               className="h-full"
             >
               <AccountsTab />
@@ -201,10 +228,7 @@ function App() {
           {activeTab === 'settings' && (
             <motion.div
               key="settings"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              {...TAB_MOTION}
               className="h-full"
             >
               <SettingsTab
@@ -227,6 +251,24 @@ function App() {
           />
         )}
       </AnimatePresence>
+      <ConfirmDialog
+        open={deleteModelIndex !== null}
+        title="删除模型"
+        message={`确定删除模型「${deleteModelIndex !== null ? (models[deleteModelIndex]?.name || models[deleteModelIndex]?.id || '') : ''}」吗？这个操作只会删除本工具里的模型配置。`}
+        confirmText="删除"
+        danger
+        onConfirm={confirmDeleteModel}
+        onClose={() => setDeleteModelIndex(null)}
+      />
+      <ConfirmDialog
+        open={Boolean(errorMessage)}
+        title="操作失败"
+        message={errorMessage}
+        confirmText="知道了"
+        cancelText=""
+        onConfirm={() => setErrorMessage('')}
+        onClose={() => setErrorMessage('')}
+      />
     </div>
   )
 }

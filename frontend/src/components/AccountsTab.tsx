@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { CalendarDays, CheckCircle, Clock3, Gauge, KeyRound, RefreshCw, ShieldCheck, Trash2, UserRound, WalletCards } from 'lucide-react'
 import * as api from '../api'
+import ConfirmDialog from './ConfirmDialog'
 import type { CodexAccount, CodexAccountsStatus, CodexQuotaWindow } from '../types'
 
 type BusyState =
@@ -23,6 +24,7 @@ export default function AccountsTab() {
   const [status, setStatus] = useState<CodexAccountsStatus | null>(null)
   const [busy, setBusy] = useState<BusyState>(null)
   const [notice, setNotice] = useState('')
+  const [accountToDelete, setAccountToDelete] = useState<CodexAccount | null>(null)
 
   const activeAccount = useMemo(() => status?.accounts.find(account => account.active) || null, [status])
 
@@ -96,11 +98,11 @@ export default function AccountsTab() {
   }
 
   const deleteAccount = async (account: CodexAccount) => {
-    if (!confirm(`确定删除账号「${accountName(account)}」吗？这只会删除本工具保存的副本。`)) return
     setBusy(`delete:${account.id}`)
     try {
       applyResult(await api.deleteCodexAccount(account.id), '删除账号失败')
       setNotice('已删除账号副本')
+      setAccountToDelete(null)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -109,8 +111,9 @@ export default function AccountsTab() {
   }
 
   return (
-    <div className="h-full overflow-y-auto px-4 pb-4">
-      <div className="space-y-4">
+    <>
+      <div className="h-full overflow-y-auto px-4 pb-4">
+        <div className="space-y-4">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
           className="bg-surface rounded-[var(--radius-sm)] border border-[var(--border)] p-6">
@@ -167,7 +170,7 @@ export default function AccountsTab() {
                     title="刷新额度">
                     <Gauge className={`w-4 h-4 ${busy === `usage:${account.id}` ? 'animate-pulse' : ''}`} />
                   </button>
-                  <button type="button" onClick={() => deleteAccount(account)} disabled={busy !== null}
+                  <button type="button" onClick={() => setAccountToDelete(account)} disabled={busy !== null}
                     className="p-2 rounded-[var(--radius-xs)] text-[var(--text-muted)] hover:text-danger hover:bg-danger-soft transition-colors disabled:opacity-50">
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -188,8 +191,19 @@ export default function AccountsTab() {
             </motion.div>
           ))}
         </div>
+        </div>
       </div>
-    </div>
+      <ConfirmDialog
+        open={Boolean(accountToDelete)}
+        title="删除账号"
+        message={`确定删除账号「${accountName(accountToDelete)}」吗？这只会删除本工具保存的账号副本，不会退出 Codex 当前登录。`}
+        confirmText="删除"
+        danger
+        busy={Boolean(accountToDelete && busy === `delete:${accountToDelete.id}`)}
+        onConfirm={() => accountToDelete && deleteAccount(accountToDelete)}
+        onClose={() => setAccountToDelete(null)}
+      />
+    </>
   )
 }
 

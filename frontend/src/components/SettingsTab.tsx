@@ -26,6 +26,7 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
   const [busy, setBusy] = useState<'official' | 'proxy' | 'pure_api' | 'refresh' | 'launch' | 'relaunch' | 'inject' | 'stop' | null>(null)
   const [notice, setNotice] = useState('')
   const [launcherNotice, setLauncherNotice] = useState('')
+  const [portError, setPortError] = useState('')
 
   const currentMode = useMemo(() => modeCopy[codex?.mode || 'official'], [codex])
   const modeButtonClass = (active: boolean) =>
@@ -71,11 +72,12 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
   const handleSave = () => {
     const p = parseInt(localPort)
     if (p >= 1 && p <= 65535) {
+      setPortError('')
       onPortChange(p)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } else {
-      alert('端口必须是 1-65535 的整数')
+      setPortError('端口必须是 1-65535 的整数')
     }
   }
 
@@ -139,8 +141,13 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
             <div>
               <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-2">代理端口</label>
               <input type="number" value={localPort} onChange={(e)=>setLocalPort(e.target.value)} min={1} max={65535}
-                className="w-52 px-4 py-2.5 bg-[var(--bg-primary)] border border-[var(--border)] rounded-[var(--radius-xs)] text-[var(--text-primary)] text-[14px] outline-none transition-all duration-200 focus:border-accent focus:ring-1 focus:ring-accent/20 focus:bg-surface hover:border-[var(--border-hover)]"
+                className={`w-52 px-4 py-2.5 bg-[var(--bg-primary)] border rounded-[var(--radius-xs)] text-[var(--text-primary)] text-[14px] outline-none transition-all duration-200 focus:ring-1 focus:bg-surface ${
+                  portError
+                    ? 'border-danger focus:border-danger focus:ring-danger/20'
+                    : 'border-[var(--border)] hover:border-[var(--border-hover)] focus:border-accent focus:ring-accent/20'
+                }`}
               />
+              {portError && <p className="text-[12px] text-danger mt-1.5">{portError}</p>}
               <p className="text-[12px] text-[var(--text-muted)] mt-1.5">修改端口后需要重启代理才能生效</p>
             </div>
             <div className="flex items-center gap-3 pt-4 border-t border-[var(--border)]">

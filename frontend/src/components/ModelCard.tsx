@@ -1,5 +1,5 @@
 ﻿import { motion } from 'framer-motion'
-import { Pencil, Trash2, Brain, CheckCircle2 } from 'lucide-react'
+import { Pencil, Trash2, Brain, CheckCircle2, Image } from 'lucide-react'
 import type { Model } from '../types'
 
 interface ModelCardProps {
@@ -32,6 +32,7 @@ export default function ModelCard({ model, onToggle, onDelete, onEdit }: ModelCa
           <div className="flex items-center gap-2">
             <div className="text-[15px] font-semibold text-[var(--text-primary)] truncate">{model.name}</div>
             {model.reasoning && <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-purple-50 text-purple-600 border border-purple-100"><Brain className="w-3 h-3"/>推理</span>}
+            {model.supports_images && <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-accent-soft text-accent border border-blue-100"><Image className="w-3 h-3"/>图片</span>}
           </div>
           <div className="text-[13px] text-accent truncate mt-0.5 font-medium">{model.base_url}</div>
         </div>

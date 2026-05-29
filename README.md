@@ -7,7 +7,7 @@
 把第三方 API、官方账号、插件能力和多账号额度管理放到一个干净的桌面工具里。
 
 <p>
-  <img src="https://img.shields.io/badge/version-v2.5.2-2563eb?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-v3.0.0-2563eb?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0f766e?style=flat-square&logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/backend-Python%20%2B%20Flask-111827?style=flat-square&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/frontend-Electron%20%2B%20React-155e75?style=flat-square&logo=react&logoColor=white" alt="Electron React">
@@ -80,7 +80,7 @@ AI Proxy Manager 是一个运行在本机的 Codex Desktop 控制台。它不提
 
 ### 2. 下载并安装
 
-下载 `AI Proxy Manager Setup 2.5.2.exe`，双击安装即可。  
+下载 `AI Proxy Manager Setup 3.0.0.exe`，双击安装即可。
 安装包已经包含后端程序，不需要额外安装 Python。
 
 ### 3. 添加模型

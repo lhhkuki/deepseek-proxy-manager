@@ -467,7 +467,7 @@ def _read_usage_for_auth(auth_file):
                 "clientInfo": {
                     "name": "ai_proxy_manager",
                     "title": "AI Proxy Manager",
-                    "version": "2.5.2",
+                    "version": "3.0.0",
                 },
                 "capabilities": {},
             },

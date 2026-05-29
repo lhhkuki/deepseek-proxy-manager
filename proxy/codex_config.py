@@ -11,6 +11,7 @@ import time
 PROVIDER_ID = "AIProxyManager"
 OFFICIAL_PROVIDER_ID = "openai"
 BEARER_TOKEN = "local-proxy"
+MAX_CONFIG_BACKUPS = 20
 
 
 def codex_home():
@@ -57,15 +58,38 @@ def _write_json_object(path, data):
 def _backup_file(path):
     if not os.path.exists(path):
         return ""
+    if os.path.basename(path) == "auth.json":
+        return ""
     backup_dir = os.path.join(codex_home(), "backups_proxy_manager")
     os.makedirs(backup_dir, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int((time.time() % 1) * 1000):03d}-{os.getpid()}"
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns()}-{os.getpid()}"
     backup_path = os.path.join(backup_dir, f"{os.path.basename(path)}.{stamp}.bak")
     with open(path, "rb") as src:
         data = src.read()
     with open(backup_path, "wb") as dst:
         dst.write(data)
+    _prune_file_backups(backup_dir, os.path.basename(path), MAX_CONFIG_BACKUPS)
     return backup_path
+
+
+def _prune_file_backups(backup_dir, basename, keep):
+    if keep < 1:
+        return
+    prefix = f"{basename}."
+    suffix = ".bak"
+    backups = []
+    for name in os.listdir(backup_dir):
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            continue
+        path = os.path.join(backup_dir, name)
+        if os.path.isfile(path):
+            backups.append(path)
+    backups.sort(key=lambda item: os.path.getmtime(item), reverse=True)
+    for path in backups[keep:]:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _provider_sync_backup_dir():
