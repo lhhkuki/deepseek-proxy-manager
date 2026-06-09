@@ -554,6 +554,7 @@ def launch_codex(port=DEFAULT_CDP_PORT, terminate_existing=False):
     args = [
         launch_exe,
         f"--remote-debugging-port={port}",
+        f"--user-data-dir={user_data_dir}",
         "--no-first-run",
     ]
     env = os.environ.copy()
@@ -687,11 +688,26 @@ def _page_targets(port):
     ]
 
 
+def _wait_page_targets(port, timeout=20):
+    deadline = time.time() + timeout
+    last_targets = []
+    while time.time() < deadline:
+        try:
+            targets = _page_targets(port)
+            if targets:
+                return targets
+            last_targets = targets
+        except Exception:
+            pass
+        time.sleep(0.35)
+    return last_targets
+
+
 def inject_unlock_script(port=DEFAULT_CDP_PORT):
     global _last_inject
     if not cdp_available(port):
         raise RuntimeError("CDP 未连接，请先用启动器启动 Codex")
-    targets = _page_targets(port)
+    targets = _wait_page_targets(port)
     if not targets:
         raise RuntimeError("未找到可注入的 Codex 页面")
     target = targets[0]
