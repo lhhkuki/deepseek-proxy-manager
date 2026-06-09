@@ -11,6 +11,7 @@ import {
   RotateCcw,
   ShieldCheck,
   Sparkles,
+  SquareStack,
   UserRound,
   Wrench,
 } from 'lucide-react'
@@ -22,7 +23,7 @@ export default function DashboardTab() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticStatus | null>(null)
   const [release, setRelease] = useState<LatestRelease | null>(null)
   const [backups, setBackups] = useState<BackupsStatus | null>(null)
-  const [busy, setBusy] = useState<'refresh' | `restore:${string}` | null>(null)
+  const [busy, setBusy] = useState<'refresh' | 'sync' | `restore:${string}` | null>(null)
   const [notice, setNotice] = useState('')
   const [backupToRestore, setBackupToRestore] = useState<BackupItem | null>(null)
 
@@ -46,6 +47,21 @@ export default function DashboardTab() {
     try {
       await loadDashboard()
       setNotice('')
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const syncConversations = async () => {
+    setBusy('sync')
+    try {
+      const result = await api.syncCodexConversations(diagnostics?.codex.mode || 'official')
+      const sync = result.codex?.conversation_sync
+      if (!sync) throw new Error(result.message || '历史记录同步失败')
+      setNotice(`已同步 ${sync.changed_session_files} 个会话文件 / ${sync.sqlite_rows_updated} 条数据库记录`)
+      await loadDashboard()
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -99,11 +115,18 @@ export default function DashboardTab() {
               </div>
               <p className="text-[12px] text-[var(--text-muted)] mt-1">代理、Codex、账号和配置的当前状态</p>
             </div>
-            <button type="button" onClick={refresh} disabled={busy !== null}
-              className="p-2 rounded-[var(--radius-xs)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors disabled:opacity-50"
-              aria-label="刷新总览">
-              <RefreshCw className={`w-4 h-4 ${busy === 'refresh' ? 'animate-spin' : ''}`} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={syncConversations} disabled={busy !== null}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-[var(--radius-xs)] bg-accent text-white text-[13px] font-semibold hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50">
+                <SquareStack className="w-4 h-4" />
+                {busy === 'sync' ? '同步中' : '同步历史记录'}
+              </button>
+              <button type="button" onClick={refresh} disabled={busy !== null}
+                className="p-2 rounded-[var(--radius-xs)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors disabled:opacity-50"
+                aria-label="刷新总览">
+                <RefreshCw className={`w-4 h-4 ${busy === 'refresh' ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">

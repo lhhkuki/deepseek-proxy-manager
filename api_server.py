@@ -31,6 +31,7 @@ from proxy.codex_config import (
     apply_proxy_config,
     apply_pure_api_config,
     apply_official_config,
+    sync_conversation_history,
     auth_path,
     codex_home,
     config_path,
@@ -641,6 +642,18 @@ def use_official_codex_config():
         return jsonify({"status": "ok", "codex": status})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
+
+
+@app.route('/api/codex-config/sync-conversations', methods=['POST'])
+def sync_codex_conversations():
+    body = request.json if isinstance(request.json, dict) else {}
+    try:
+        sync = sync_conversation_history(body.get("mode"))
+        status = codex_config_status()
+        status["conversation_sync"] = sync
+        return jsonify({"status": "ok", "codex": status})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "codex": codex_config_status()}), 400
 
 
 @app.route('/api/codex-launcher/status', methods=['GET'])

@@ -94,7 +94,7 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
               </div>
             </div>
             <div>
-              <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-2">上游协议</label>
+              <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-2">协议转换</label>
               <div className="flex gap-2">
                 {['openai','anthropic'].map((fmt) => (
                   <button key={fmt} type="button" onClick={()=>setUpstreamFormat(fmt)}
@@ -105,6 +105,9 @@ export default function ModelDialog({ model, onClose, onSave }: ModelDialogProps
                   </button>
                 ))}
               </div>
+              <p className="text-[11px] text-[var(--text-muted)] mt-2 leading-5">
+                Codex 仍按 OpenAI Responses 发送请求；这里决定转发到上游模型时使用 OpenAI 兼容协议或 Anthropic Messages 协议。
+              </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <ToggleOption

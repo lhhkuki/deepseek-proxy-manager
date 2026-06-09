@@ -163,6 +163,15 @@ export async function applyOfficialCodexConfig() {
   return readJson<{ status: string; message?: string; codex?: CodexConfigStatus }>(res)
 }
 
+export async function syncCodexConversations(mode?: CodexConfigStatus['mode']) {
+  const res = await fetchWithRetry(`${API_BASE}/codex-config/sync-conversations`, withLocalHeader({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  }))
+  return readJson<{ status: string; message?: string; codex?: CodexConfigStatus }>(res)
+}
+
 export async function getCodexLauncherStatus() {
   const res = await fetchWithRetry(`${API_BASE}/codex-launcher/status`)
   return readJson<CodexLauncherStatus>(res)

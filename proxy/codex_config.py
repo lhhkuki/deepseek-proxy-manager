@@ -280,6 +280,25 @@ def _sync_conversation_provider(target_provider):
     return result
 
 
+def _target_provider_for_mode(mode):
+    mode = str(mode or "").strip().lower()
+    if mode == "official":
+        return OFFICIAL_PROVIDER_ID
+    if mode in ("proxy", "pure_api"):
+        return PROVIDER_ID
+    return ""
+
+
+def sync_conversation_history(mode=None):
+    """Resync saved Codex conversations to the requested provider mapping."""
+    if mode is None:
+        mode = codex_config_status().get("mode")
+    target_provider = _target_provider_for_mode(mode)
+    if not target_provider:
+        raise ValueError("Current Codex mode does not support conversation sync.")
+    return _sync_conversation_provider(target_provider)
+
+
 def _active_model_id():
     try:
         from .config import get_active_model_config

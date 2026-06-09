@@ -186,7 +186,6 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
             <StatusTile icon={<UserRound className="w-4 h-4" />} label="官方登录" value={codex?.auth.authenticated ? '已登录' : '未检测到'} detail={codex?.auth.message || codex?.api_auth.message || '正在读取 auth.json'} tone={codex?.auth.authenticated || codex?.api_auth.authenticated ? 'text-success bg-success-soft' : 'text-danger bg-danger-soft'} />
             <StatusTile icon={<KeyRound className="w-4 h-4" />} label="当前模型" value={activeModelId || codex?.model || '未选择'} detail={codex?.provider ? `provider: ${codex.provider}` : '将使用启用中的模型'} tone="text-[var(--text-secondary)] bg-[var(--bg-surface-hover)]" />
           </div>
-
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
             <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => applyMode('official')} disabled={busy !== null}
               className={modeButtonClass(codex?.mode === 'official')}>
@@ -206,6 +205,9 @@ export default function SettingsTab({ port, activeModelId, onPortChange }: Setti
           </div>
 
           {notice && <p className="text-[12px] text-[var(--text-muted)] mt-4 break-all">{notice}</p>}
+          {!notice && codex?.conversation_sync?.message && (
+            <p className="text-[12px] text-[var(--text-muted)] mt-4 break-all">{codex.conversation_sync.message}</p>
+          )}
           <p className="text-[12px] text-[var(--text-muted)] mt-3 break-all">配置文件：{codex?.config_path || '读取中'}</p>
         </motion.div>
 
